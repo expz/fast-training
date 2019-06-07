@@ -1,0 +1,30 @@
+/* Styles */
+
+body {
+  font-family: Lucida Console,Monaco,Courier New,monospace;
+  margin-top: 40px;
+}
+
+#english {
+  padding-top: 10px;
+  font-weight: bold;
+}
+
+#english-label {
+  margin-bottom: 0.5em;
+}
+
+button {
+  background-color: #1d1ab2;
+  border: 1px solid #ffffff;
+  color: #ffffff;
+  font-family: Trebuchet MS,Lucida Grande,Lucida Sans Unicode,Lucida Sans,Tahoma,sans-serif;
+  font-size: 20px;
+  font-weight: bold;
+  margin-top: 12px;
+  padding: 8px 16px;
+}
+
+button:hover {
+  background-color: #333333;
+}

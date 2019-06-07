@@ -1,0 +1,9 @@
+**/README.md
+infra/
+venv/
+.git/
+.pytest_cache/
+**/__pycache__
+.gitignore
+.dockerignore
+LICENSE

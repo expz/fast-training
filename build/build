@@ -1,0 +1,45 @@
+#!/bin/bash
+
+read_char() {
+  stty -icanon -echo
+  eval "$1=\$(dd bs=1 count=1 2>/dev/null)"
+  stty icanon echo
+  echo "$char"
+}
+
+prompt() {
+  echo -n "$1"
+  read_char char
+  while [ "$char" != 'y' ] && [ "$char" != 'Y' ] && [ "$char" != 'n' ] && [ "$char" != 'N' ]; do
+    echo -n "$1"
+    read_char char
+  done
+  if [ "$char" = 'y' ] || [ "$char" = 'Y' ]; then
+    return 0
+  else
+    return 1
+  fi
+}
+
+SCRIPT_DIR="$(dirname "$(readlink -f "$BASH_SOURCE")")"
+
+VERSION='v0.2.0'
+if [ -n "$GCP_PROJECT" ]; then
+  IMAGE_NAME="gcr.io/$GCP_PROJECT/app"
+else
+  IMAGE_NAME='insight-translation-app'
+fi
+
+docker build -t "$IMAGE_NAME" -t "$IMAGE_NAME:$VERSION" "$SCRIPT_DIR/.."
+
+if [ -n "$GCP_PROJECT" ]; then
+  if prompt "Push docker image to Google Container Registry (y/n)? " ; then
+    docker push "$IMAGE_NAME"
+
+    if prompt "(Re)deploy docker image to Google Run (y/n)? " ; then
+      gcloud beta run deploy --image "$IMAGE_NAME" --project "$GCP_PROJECT"
+    fi
+  fi
+else
+  echo "The GCP_PROJECT environment variable was not set. Skipping push to Google Container Registry."
+fi

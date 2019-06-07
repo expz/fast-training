@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+
+    <title>Translate French to English</title>
+
+    <link rel="stylesheet" href="https://stackpath.bootstrapcdn.com/bootstrap/4.1.3/css/bootstrap.min.css" integrity="sha384-MCw98/SFnGE8fJT3GXwEOngsV7Zt27NXFoaoApmYm81iuXoPkFOJwJ8ERdknLPMO" crossorigin="anonymous">
+    <link rel="stylesheet" href="css/main.css">
+  </head>
+  <body>
+    <div class="container">
+      <div class="row">
+        <div class="col-sm-6">
+          <h1 class="display-6">Translate French to English</h1>
+          <form id="translationForm">
+            <div class="form-group">
+              <label for="french">French</label>
+              <textarea class="form-control" rows="4" id="french" name="fr" placeholder="Enter French sentence here."></textarea>
+            </div>
+            <button type="submit">Translate</button>
+          </form>
+          <br/>
+          <div id="english-label">English</div>
+          <div class="card" id="english-card">
+            <div class="card-body" id="english"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <script src="js/main.js"></script>
+  </body>
+</html>
