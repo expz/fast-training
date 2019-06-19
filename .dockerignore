@@ -1,6 +1,7 @@
 **/README.md
 infra/
 venv/
+mt-fast-training/
 .git/
 .pytest_cache/
 **/__pycache__

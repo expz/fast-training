@@ -1,0 +1,37 @@
+gpu_ids:
+  - 0
+
+data:
+  src: fr
+  tgt: en
+  dir: data/wmt_fr_en
+  batch_size: 16
+  max_length: 70
+
+encoder:
+  embedding_dim: 128
+  embedding_dropout: 0.2
+
+decoder:
+  embedding_dim: 128
+  embedding_dropout: 0.2
+  prediction_dropout: 0.2
+ 
+network:
+  bias: false
+  block_sizes:
+    - 24
+  division_factor: 2
+  dropout: 0.2
+  efficient: true
+  growth_rate: 32
+  aggregator: max
+
+optim: 
+  seed: 1
+  lr: 0.001
+  max_epochs: 35
+  solver: adam
+  alpha: 0.9
+  beta: .999
+  epsilon: 1e-8
