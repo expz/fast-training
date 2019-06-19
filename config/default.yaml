@@ -30,7 +30,7 @@ network:
 optim: 
   seed: 1
   lr: 0.001
-  max_epochs: 35
+  epochs: 35
   solver: adam
   alpha: 0.9
   beta: .999

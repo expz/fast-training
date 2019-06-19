@@ -113,9 +113,14 @@ class DenseLayer(nn.Module):
             cat_input = torch.cat(inputs, 1)
             return self.conv1(self.relu1(self.norm1(cat_input)))
 
-        if self.efficient:
-            # Wins decreased memory at cost of extra computation.
-            # Does not compute intermediate values, but recomputes them in backward pass.
+        calc_grad = any(t.requires_grad
+                        for t in prev_features
+                        if isinstance(t, torch.Tensor))
+        if self.efficient and calc_grad:
+            # Wins decreased memory at cost of extra computation. Does not
+            # compute intermediate values, but recomputes them in backward pass.
+            # Do not checkpoint when running without tracking gradients, e.g. on
+            # validation set.
             bottleneck_output = cp.checkpoint(bottleneck, *prev_features)
         else:
             bottleneck_output = bottleneck(*prev_features)

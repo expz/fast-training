@@ -34,7 +34,13 @@ class PervasiveApp(object):
     using command line arguments.
     """
 
-    def _parse_args(self, config, gpu_ids=[], lr=None):
+    def _parse_args(self,
+                    config,
+                    gpu_ids=[],
+                    lr=None,
+                    batch_size=None,
+                    epochs=None,
+                    epoch_size=None):
         """
         Parse the config file `config` and `gpu_ids` for various commands.
         """
@@ -53,6 +59,16 @@ class PervasiveApp(object):
             params['optim'] = {}
         if lr is not None:
             params['optim']['lr'] = lr
+        if epochs is not None:
+            params['optim']['epochs'] = epochs
+        if batch_size is not None:
+            params['data']['batch_size'] = batch_size
+        if epoch_size is not None:
+            params['data']['epoch_size'] = epoch_size
+        if 'max_val_size' not in params['data']:
+            params['data']['max_val_size'] = None
+        if 'max_test_size' not in params['data']:
+            params['data']['max_test_size'] = None
 
         project_dir = os.path.dirname(os.path.abspath(__file__))
         if 'model_name' not in params:
@@ -60,11 +76,20 @@ class PervasiveApp(object):
 
         return params, project_dir
 
-    def train(self, config, gpu_ids=None, lr=None):
+    def train(self,
+              config,
+              gpu_ids=None,
+              lr=None,
+              checkpoint=None,
+              restore=None,
+              batch=None,
+              epochs=None,
+              epoch_size=None):
         """
         Train the model described in file `config` on GPUs `gpu_ids`.
         """
-        params, project_dir = self._parse_args(config, gpu_ids, lr)
+        params, project_dir = self._parse_args(config, gpu_ids, lr, batch,
+                                               epochs, epoch_size)
         if 'gpu_ids' not in params:
             # Training requires a GPU.
             raise ValueError('Expected parameter "gpu_ids" not supplied.')
@@ -83,7 +108,8 @@ class PervasiveApp(object):
         os.environ['MASTER_PORT'] = '3892'
         os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4,5,6,7'
         torch.multiprocessing.spawn(train_worker,
-                                    args=(project_dir, params, comm_file),
+                                    args=(project_dir, params, comm_file,
+                                          checkpoint, restore),
                                     nprocs=len(params['gpu_ids']),
                                     join=True)
 

@@ -4,12 +4,58 @@ sentences together with their vocabularies.
 """
 
 import h5py
+import math
 import numpy as np
 import pickle
 import torch
 from torch.utils.data.distributed import DistributedSampler
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, RandomSampler
 import torch.utils.data  # Need this to avoid "module has no attribute 'data'".
+
+
+class DistributedSubSampler(DistributedSampler):
+    """Sampler that extends the standard DistributedSampler to generate
+    epochs of a fixed size from a larger dataset.
+
+    This is useful to reduce epoch size for large datasets so that
+    checkpoints will be reached more often. Attempting to put checkpoint
+    callbacks in the middle of an epoch does not mesh well with the
+    architecture of Pytorch/Fast.ai.
+
+    Adapted from https://github.com/pytorch/pytorch/
+                         blob/master/torch/utils/data/distributed.py
+    """
+
+    def __init__(self, dataset, num_replicas=None, rank=None, epoch_size=None):
+        super().__init__(dataset, num_replicas, rank)
+        if epoch_size is None:
+            epoch_size = self.total_size
+        else:
+            self.num_samples = int(
+                math.ceil(epoch_size * 1.0 / self.num_replicas))
+            self.epoch_size = self.num_samples * self.num_replicas
+
+    def __iter__(self):
+        """
+        Returns this worker's portion of a sample of size `self.epoch_size` from
+        the shuffled dataset.
+        """
+        # Deterministically shuffle based on epoch.
+        g = torch.Generator()
+        g.manual_seed(self.epoch)
+        indices = torch.randperm(len(self.dataset), generator=g).tolist()
+        # TODO: Sample epochs without replacement.
+        indices = indices[:self.epoch_size]
+
+        # Add extra samples to make it evenly divisible.
+        indices += indices[:(self.epoch_size - len(indices))]
+        assert len(indices) == self.epoch_size
+
+        # Subsample portion for this worker.
+        indices = indices[self.rank:self.epoch_size:self.num_replicas]
+        assert len(indices) == self.num_samples
+
+        return iter(indices)
 
 
 class VocabData(object):
@@ -50,6 +96,9 @@ class PervasiveDataLoader(object):
                  batch_size,
                  max_length,
                  model_name,
+                 epoch_size=None,
+                 max_val_size=None,
+                 max_test_size=None,
                  distributed=False):
         self.model_name = model_name
 
@@ -86,14 +135,27 @@ class PervasiveDataLoader(object):
                     tgt = torch.cat((tgt_bos, tgt, tgt_eos), 1)
                     src_tgt = torch.cat((src, tgt), 1)
                     tgt2 = tgt.clone()
+                    # Shrink datasets if they are too large.
+                    if dsname == 'val' and max_val_size:
+                        src_tgt = src_tgt[:max_val_size]
+                        tgt2 = tgt2[:max_val_size]
+                    elif dsname == 'test' and max_test_size:
+                        src_tgt = src_tgt[:max_test_size]
+                        tgt2 = tgt2[:max_test_size]
                     self.datasets[dsname] = torch.utils.data.TensorDataset(
                         src_tgt, tgt2)
                     # Hack to please fastai Learner.summary().
                     self.datasets[dsname].is_empty = False
+                    # Define dataloader with distributed sampler.
                     if distributed:
-                        sampler = DistributedSampler(self.datasets[dsname])
+                        sampler = DistributedSubSampler(self.datasets[dsname],
+                                                        epoch_size=epoch_size)
                     else:
-                        sampler = None
+                        # TODO: Define a non-distributed sub-sampler
+                        #       without replacement.
+                        sampler = RandomSampler(self.datasets[dsname],
+                                                replacement=True,
+                                                num_samples=epoch_size)
                     self.loaders[dsname] = DataLoader(
                         self.datasets[dsname],
                         batch_size=self.batch_size,

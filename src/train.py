@@ -2,9 +2,10 @@
 These functions implement machine translation model training.
 """
 
+from collections import OrderedDict
 from fastai.basic_data import DataBunch
-from fastai.basic_train import Learner
-import fastai.train  # Required to add lr_find() function to Learner.
+from fastai.callbacks.tracker import LearnerCallback, SaveModelCallback, TrackerCallback
+from fastai.train import validate, Learner
 import os
 import torch
 import torch.nn.functional as F
@@ -28,30 +29,7 @@ def check_params(params, param_list):
             raise ValueError(f'Expected parameter "{param}" not supplied.')
 
 
-def save_parallel(learn, name):
-    """
-    Save a model. Works also for parallelized models.
-
-    From https://forums.fast.ai/t/how-to-use-multiple-gpus/26057/10?u=shaun1
-    """
-    learn.save(name)
-    state_dict = torch.load(f'{name}.pth')
-
-    # Create new OrderedDict that does not contain `module`.
-    new_state_dict = OrderedDict()
-    for k, v in state_dict.items():
-        name = k[7:]  # Remove `module`.
-        new_state_dict[name] = v
-    # Load params.
-    model.load_state_dict(new_state_dict)
-    learn.save(name)
-    learn.save_encoder(f'{name}_encoder')
-
-
-def build_learner(params,
-                  project_dir,
-                  pindex=0,
-                  comm_file=None):
+def build_learner(params, project_dir, pindex=0, comm_file=None):
     """
     Builds a fastai `Learner` object containing the model and data specified by
     `params`. It is configured to run on GPU `device_id`. Assumes it is GPU
@@ -59,7 +37,14 @@ def build_learner(params,
     used, a file named `comm_file` is used to communicate between processes.
     """
     model_name = params['model_name']
-    model_dir = os.path.join(project_dir, 'model')
+    model_dir = os.path.join(project_dir, 'model', model_name)
+    try:
+        # Try to make the directory for saving models.
+        os.makedirs(model_dir)
+    except FileExistsError:
+        pass
+
+    # Configure GPU/CPU device settings.
     gpu_ids = params['gpu_ids']
     world_size = len(gpu_ids) if len(gpu_ids) > 0 else 1
     distributed = world_size > 1
@@ -83,7 +68,11 @@ def build_learner(params,
     # Load data.
     check_params(params, [
         'data.batch_size',
+        'data.dir',
+        'data.epoch_size',
         'data.max_length',
+        'data.max_test_size',
+        'data.max_val_size',
         'data.src',
         'data.tgt',
     ])
@@ -102,6 +91,9 @@ def build_learner(params,
                                  batch_size,
                                  params['data']['max_length'],
                                  model_name,
+                                 epoch_size=params['data']['epoch_size'],
+                                 max_val_size=params['data']['max_val_size'],
+                                 max_test_size=params['data']['max_test_size'],
                                  distributed=distributed)
     # Define neural network.
     check_params(params, [
@@ -144,7 +136,12 @@ def build_learner(params,
     return Learner(data, model, loss_func=F.cross_entropy, model_dir=model_dir)
 
 
-def train_worker(pindex, project_dir, params, comm_file=None):
+def train_worker(pindex,
+                 project_dir,
+                 params,
+                 comm_file=None,
+                 checkpoint=None,
+                 restore=None):
     """
     Trains the model as specified by `params` on GPU `gpu_ids[pindex]`.
     Uses `comm_file` to communicate between processes.
@@ -152,11 +149,50 @@ def train_worker(pindex, project_dir, params, comm_file=None):
 
     This is run in separate processes from the command line app, with
     one process per GPU.
+
+    Optionally save the model every `checkpoint` batches.
+
+    Optionally load a saved model with filename `restore`.
     """
     # Variable used for distributed processing.
     if not os.getenv('RANK', None):
         os.environ['RANK'] = str(pindex)
 
     learn = build_learner(params, project_dir, pindex, comm_file)
-    lr = params['optim']['lr']
-    learn.fit_one_cycle(1, lr, tot_epochs=1)  # One epoch.
+
+    # Restore saved model if necessary.
+    epoch = None
+    if restore is not None:
+        try:
+            # Remove extension if provided to match `load()`'s expectation.
+            if restore[-4:] == '.pth':
+                restore = restore[:-4]
+            learn.load(restore, purge=False)
+            if pindex == 0:
+                # Only print once even with multiple workers.
+                print(f'Loaded model {restore}.')
+        except FileNotFoundError:
+            if pindex == 0:
+                # Only print once even with mulitple workers.
+                print(f'The model file {learn.model_dir}/{restore}.pth '
+                      'was not found!')
+            return
+        fields = restore.split('/')[-1].split('_')
+        if len(fields) > 1:
+            try:
+                epoch = int(fields[1]) + 1
+            except:
+                pass
+
+    # Callbacks.
+    learn.callbacks = [SaveModelCallback(learn, every='epoch', name='model')]
+
+    # Train with a one cycle schedule for each epoch.
+    check_params(params, [
+        'optim.epochs',
+        'optim.lr',
+    ])
+    learn.fit_one_cycle(params['optim']['epochs'],
+                        params['optim']['lr'],
+                        tot_epochs=params['optim']['epochs'],
+                        start_epoch=epoch)
