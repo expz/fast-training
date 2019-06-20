@@ -53,7 +53,9 @@ source .env
 gunicorn -b 0.0.0.0:8887 app:api
 ```
 
-3. Navigate to [http://localhost:8887](http://localhost:8887). The health check is available at [http://localhost:8887/health](http://localhost:8887/health). To test the API directly, you can run (requires `curl` to be installed):
+3. Navigate to [http://localhost:8887](http://localhost:8887) in a browser to see the website. The health check is available at [http://localhost:8887/health](http://localhost:8887/health). It should print 'OK'.
+
+4. To test the API directly, open a new terminal and run (requires `curl` to be installed):
 ```
 curl -X POST -H 'Content-type: application/json' -d '{"fr": "Bonjour le monde!"}' http://localhost:8887/api/translate/fren
 ```
@@ -77,7 +79,7 @@ Run the following commands from the root directory of the repository.
 
 1. Download and prepare the dataset. This requires over a GB of disk space.
 ```
-./build/prepare-wmt14 --small
+yes | ./build/prepare-wmt14 --small
 ```
 To prepare the full dataset, omit the `--small`. Preparation for the full dataset can take 15GB of disk space and 10-15 minutes on a fast computer. 
 
