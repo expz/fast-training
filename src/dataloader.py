@@ -125,7 +125,7 @@ class PervasiveDataLoader(object):
             src = prepare_ds(src_h5, dsname, self.src_vocab, self.max_length)
             tgt = prepare_ds(tgt_h5, dsname, self.tgt_vocab, self.max_length)
             srctgt = torch.cat((src, tgt), 1)
-            tgt2 = tgt.clone()
+            tgt2 = tgt[:, 1:].clone()  # Do not include BOS tokens in target output.
             # Shrink datasets if they are too large.
             if dsname == 'val' and max_val_size:
                 srctgt = srctgt[:max_val_size]
