@@ -16,9 +16,8 @@ cache = functools.lru_cache(4096)
 def translate_fren(fr_text: str) -> str:
     """
     """
-    logger.debug(
-        f'translating {len(fr_text)} chars of french, '
-        + f'{len(fr_text.split())} tokens')
+    logger.debug(f'translating {len(fr_text)} chars of french, ' +
+                 f'{len(fr_text.split())} tokens')
     t0 = time.time()
 
     model = get_model()

@@ -1,0 +1,207 @@
+#!/bin/bash
+#
+# Adapted from https://github.com/elbayadm/attn2d/tree/master/scripts
+# Which adapted it from https://github.com/pytorch/fairseq/blob/master/
+#                               examples/translation/prepare-wmt14en2de.sh
+
+# Exit on error.
+set -e
+
+script_dir="$(dirname "$(readlink -f "$BASH_SOURCE")")"
+
+. "$script_dir/util.sh"
+
+about() {
+  cat <<EOF
+USAGE: ./prepare-wmt14.sh [--small]
+
+Download and prepare WMT2014 French to English dataset. This requires
+up to 10GB space while it is running. It requires downloading data
+for multiple languages, because it is all stored in a single zipfile.
+
+--small   Download and prepare only the Europarl data.
+EOF
+}
+
+if [ "$1" = '-h' ]; then
+  about
+fi
+
+project_dir="$(dirname "$(dirname "$(readlink -f "$BASH_SOURCE")")")"
+
+src=fr
+tgt=en
+lang=fr-en
+data_dir="$project_dir/data/wmt_${src}_${tgt}"
+moses_dir="$project_dir/data/mosesdecoder"
+tmp="$data_dir/tmp"
+download="$data_dir/download"
+
+# Setup Moses decoder.
+if [ ! -d "$moses_dir" ]; then 
+  echo 'Cloning Moses github repository (for tokenization scripts)...'
+  git clone https://github.com/moses-smt/mosesdecoder.git "$moses_dir"
+fi
+
+scripts=$moses_dir/scripts
+tokenizer=$scripts/tokenizer/tokenizer.perl
+clean=$scripts/training/clean-corpus-n.perl
+norm_punc=$scripts/tokenizer/normalize-punctuation.perl
+rem_non_print_char=$scripts/tokenizer/remove-non-printing-char.perl
+
+if [ ! -d "$scripts" ]; then
+  echo "Please set scripts variable correctly to point to Moses scripts."
+  exit
+fi
+
+# Datasets.
+if [ "$1" = '--small' ]; then
+  echo "using small dataset"
+  URLS=(
+    "http://www.statmt.org/europarl/v7/${src}-${tgt}.tgz"
+    "http://www.statmt.org/wmt14/test-full.tgz"
+  )
+  CORPORA=(
+    "europarl-v7.${src}-${tgt}"
+  )
+else
+  echo "using full dataset"
+  URLS=(
+    "http://www.statmt.org/europarl/v7/${src}-${tgt}.tgz"
+    "http://www.statmt.org/wmt13/training-parallel-commoncrawl.tgz"
+    "http://www.statmt.org/wmt14/training-parallel-nc-v9.tgz"
+    "http://www.statmt.org/wmt14/test-full.tgz"
+  )
+  CORPORA=(
+    "europarl-v7.${src}-${tgt}"
+    "commoncrawl.${src}-${tgt}"
+    "training/news-commentary-v9.${src}-${tgt}"
+  )
+fi
+
+# BPE tokens.
+BPE_TOKENS=30000
+
+mkdir -p $data_dir $tmp $download
+
+cd $download
+
+# Download files listed in URLS.
+cat <<EOF
+downloading data files
+
+****************************************************
+zip files may contain data for additional languages!
+****************************************************
+
+EOF
+
+if prompt "Download and extract data (y/n)? " ; then
+  for url in "${URLS[@]}"; do
+    file=$(echo $url | rev | cut -d '/' -f 1 | rev)
+    echo "file $file"
+    if [ -f $file ]; then
+      echo "$file already exists, skipping download"
+    else
+      wget "$url"
+      if [ -f $file ]; then
+        echo "$url successfully downloaded."
+      else
+        echo "$url not successfully downloaded."
+        exit -1
+      fi
+    fi
+    echo "extracting $file"
+    if [ ${file: -4} == ".tgz" ]; then
+      tar zxvf $file
+    elif [ ${file: -4} == ".tar" ]; then
+      tar xvf $file
+    fi
+  done
+fi
+
+cd ..
+
+if prompt "Pre-process training data (y/n)? " ; then
+  echo "pre-processing training data..."
+  for l in $src $tgt; do
+    rm -f $tmp/train.tags.$lang.tok.$l
+    for f in "${CORPORA[@]}"; do
+      echo "pre-processing $download/$f.$l"
+      cat $download/$f.$l | \
+        perl $norm_punc $l | \
+        perl $rem_non_print_char | \
+        perl $tokenizer -threads 8 -a -l $l >> $tmp/train.tags.$lang.tok.$l
+    done
+  done
+
+fi
+
+if prompt "Pre-process test data (y/n)? " ; then
+
+echo "pre-processing test data..."
+  for l in $src $tgt; do
+    if [ "$l" == "$src" ]; then
+      t="src"
+    else
+      t="ref"
+    fi
+    echo "pre-processing $tmp/test.$l"
+    grep '<seg id' $download/test-full/newstest2014-${src}${tgt}-$t.$l.sgm | \
+      sed -e 's/<seg id="[0-9]*">\s*//g' | \
+      sed -e 's/\s*<\/seg>\s*//g' | \
+      sed -e "s/\’/\'/g" | \
+      perl $tokenizer -threads 8 -a -l $l > $tmp/test.$l
+  done
+fi
+
+train=$tmp/train.${src}-${tgt}
+
+if prompt "Split data into training and validation (y/n)? " ; then
+  echo "splitting train and valid..."
+  for l in $src $tgt; do
+    awk '{if (NR%100 == 0)  print $0; }' $tmp/train.tags.$lang.tok.$l > $tmp/valid.$l
+    awk '{if (NR%100 != 0)  print $0; }' $tmp/train.tags.$lang.tok.$l > $tmp/train.$l
+  done
+  rm -f $train
+  for l in $src $tgt; do
+    cat $tmp/train.$l >> $train
+  done
+fi
+
+bpe_code=$data_dir/bpe_code
+
+if prompt "Learn BPE (y/n)? " ; then
+  echo "learn_bpe.py on ${train}..."
+  subword-nmt learn-bpe -s $BPE_TOKENS < $train > $bpe_code
+fi
+
+if prompt "Apply BPE (y/n)? " ; then
+  for L in $src $tgt; do
+    for f in train.$L valid.$L test.$L; do
+      echo "apply_bpe.py to ${f}..."
+      subword-nmt apply-bpe -c $bpe_code < $tmp/$f > $tmp/bpe.$f
+    done
+  done
+fi
+
+if prompt "Clean datasets (y/n)? " ; then
+  perl $clean -ratio 1.5 $tmp/bpe.train $src $tgt $data_dir/train 1 250
+  perl $clean -ratio 1.5 $tmp/bpe.valid $src $tgt $data_dir/valid 1 250
+fi
+
+for L in $src $tgt; do
+  cp $tmp/bpe.test.$L $data_dir/test.$L
+done
+
+if prompt "Transform data into HDF5 files (y/n)? " ; then
+  "$project_dir/build/preprocess.py" -d "$data_dir/wmt_fr_en/" --src "$src" --trg "$tgt" --max_length 200
+fi
+
+if prompt "Delete temp files (y/n)? " ; then
+  rm -r $tmp
+fi
+
+if prompt "Delete downloaded files (y/n)? " ; then
+  rm -r "$download"
+fi

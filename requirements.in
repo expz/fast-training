@@ -1,2 +1,10 @@
 falcon
+fastai
+fire
 gunicorn
+h5py
+numpy
+PyYAML
+streamlit
+subword-nmt
+torch
