@@ -100,69 +100,59 @@ class PervasiveDataLoader(object):
                  max_val_size=None,
                  max_test_size=None,
                  distributed=False):
+
+        def prepare_ds(h5fn, dsname, vocab, max_length):
+            h5ds = H5Dataset(h5fn, f'labels_{dsname}')
+            lens = H5Dataset(h5fn, f'lengths_{dsname}')
+            bos = torch.tensor([[vocab.bos]], dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
+            pad = torch.tensor([[vocab.pad]], dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
+            ds = torch.cat((bos, h5ds.data[:, :max_length], pad), 1)
+            indices = (torch.tensor(range(ds.shape[0])), lens.data.clamp(0, max_length))
+            ds.index_put_(indices, torch.tensor([vocab.eos], dtype=torch.int64))
+            return ds[:-1]
+
         self.model_name = model_name
+        self.batch_size = batch_size
+        self.max_length = max_length
 
         self.src_vocab = VocabData(src_infos)
         self.tgt_vocab = VocabData(tgt_infos)
-        self.batch_size = batch_size
-        self.max_length = max_length
 
         # Load HDF5 data file.
         self.datasets = {}
         self.loaders = {}
-        with h5py.File(src_h5, 'r', libver='latest', swmr=True) as src_file:
-            with h5py.File(tgt_h5, 'r', libver='latest', swmr=True) as tgt_file:
-                for dsname in ['train', 'val', 'test']:
-                    src = np.array(src_file[f'labels_{dsname}']).astype(
-                        np.int64)
-                    src = torch.as_tensor(src, dtype=torch.long)
-                    src_bos = torch.tensor([[self.src_vocab.bos]],
-                                           dtype=torch.int64).repeat(
-                                               src.shape[0], 1)
-                    src_eos = torch.tensor([[self.src_vocab.eos]],
-                                           dtype=torch.int64).repeat(
-                                               src.shape[0], 1)
-                    src = torch.cat((src_bos, src, src_eos), 1)
-                    tgt = np.array(tgt_file[f'labels_{dsname}']).astype(
-                        np.int64)
-                    tgt = torch.as_tensor(tgt, dtype=torch.long)
-                    tgt_bos = torch.tensor([[self.src_vocab.bos]],
-                                           dtype=torch.int64).repeat(
-                                               tgt.shape[0], 1)
-                    tgt_eos = torch.tensor([[self.src_vocab.eos]],
-                                           dtype=torch.int64).repeat(
-                                               tgt.shape[0], 1)
-                    tgt = torch.cat((tgt_bos, tgt, tgt_eos), 1)
-                    src_tgt = torch.cat((src, tgt), 1)
-                    tgt2 = tgt.clone()
-                    # Shrink datasets if they are too large.
-                    if dsname == 'val' and max_val_size:
-                        src_tgt = src_tgt[:max_val_size]
-                        tgt2 = tgt2[:max_val_size]
-                    elif dsname == 'test' and max_test_size:
-                        src_tgt = src_tgt[:max_test_size]
-                        tgt2 = tgt2[:max_test_size]
-                    self.datasets[dsname] = torch.utils.data.TensorDataset(
-                        src_tgt, tgt2)
-                    # Hack to please fastai Learner.summary().
-                    self.datasets[dsname].is_empty = False
-                    # Define dataloader with distributed sampler.
-                    if distributed:
-                        sampler = DistributedSubSampler(self.datasets[dsname],
-                                                        epoch_size=epoch_size)
-                    else:
-                        # TODO: Define a non-distributed sub-sampler
-                        #       without replacement.
-                        sampler = RandomSampler(self.datasets[dsname],
-                                                replacement=True,
-                                                num_samples=epoch_size)
-                    self.loaders[dsname] = DataLoader(
-                        self.datasets[dsname],
-                        batch_size=self.batch_size,
-                        shuffle=False,
-                        num_workers=1,
-                        pin_memory=True,
-                        sampler=sampler)
+        for dsname in ['train', 'val', 'test']:
+            src = prepare_ds(src_h5, dsname, self.src_vocab, self.max_length)
+            tgt = prepare_ds(tgt_h5, dsname, self.tgt_vocab, self.max_length)
+            srctgt = torch.cat((src, tgt), 1)
+            tgt2 = tgt.clone()
+            # Shrink datasets if they are too large.
+            if dsname == 'val' and max_val_size:
+                srctgt = srctgt[:max_val_size]
+                tgt2 = tgt2[:max_val_size]
+            elif dsname == 'test' and max_test_size:
+                srctgt = srctgt[:max_test_size]
+                tgt2 = tgt2[:max_test_size]
+            self.datasets[dsname] = torch.utils.data.TensorDataset(srctgt, tgt2)
+            # Hack to please fastai Learner.summary().
+            self.datasets[dsname].is_empty = False
+            # Define dataloader with distributed sampler.
+            if distributed:
+                sampler = DistributedSubSampler(self.datasets[dsname],
+                                                epoch_size=epoch_size)
+            else:
+                # TODO: Define a non-distributed sub-sampler
+                #       without replacement.
+                sampler = RandomSampler(self.datasets[dsname],
+                                        replacement=True,
+                                        num_samples=epoch_size)
+            self.loaders[dsname] = DataLoader(
+                self.datasets[dsname],
+                batch_size=self.batch_size,
+                shuffle=False,
+                num_workers=1,
+                pin_memory=True,
+                sampler=sampler)
 
 
 class H5Dataset(torch.utils.data.Dataset):
@@ -175,23 +165,22 @@ class H5Dataset(torch.utils.data.Dataset):
         Loads dataset `dsname` from file `h5_filename` into a Pytorch tensor.
         """
         super().__init__()
-        self.data_info = {}
 
         self.h5_filename = h5_filename
         self.dsname = dsname
         with h5py.File(self.h5_filename, 'r', libver='latest',
                        swmr=True) as h5_file:
-            self.data_cache = torch.tensor(
-                np.array(h5_file[dsname]).astype(np.int32))
+            self.data = torch.as_tensor(
+                np.array(h5_file[dsname]).astype(np.int64), dtype=torch.long)
 
     def __getitem__(self, index):
         """
         Get row `index` from the dataset.
         """
-        return self.data_cache[index]
+        return self.data[index]
 
     def __len__(self):
         """
         Get the number of rows in the dataset.
         """
-        return len(self.data_cache)
+        return len(self.data)
