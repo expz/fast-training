@@ -11,7 +11,7 @@ import torch
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
 
-from dataloader import PervasiveDataLoader
+from dataloader import PervasiveDataLoader, ProgressivePervasiveDataLoader
 from pervasive import Pervasive
 
 
@@ -84,17 +84,34 @@ def build_learner(params, project_dir, pindex=0, comm_file=None):
     tgt_infos = os.path.join(data_dir, f'{tgt_l}.infos')
     src_h5 = os.path.join(data_dir, f'{src_l}.h5')
     tgt_h5 = os.path.join(data_dir, f'{tgt_l}.h5')
-    loader = PervasiveDataLoader(src_infos,
-                                 src_h5,
-                                 tgt_infos,
-                                 tgt_h5,
-                                 batch_size,
-                                 params['data']['max_length'],
-                                 model_name,
-                                 epoch_size=params['data']['epoch_size'],
-                                 max_val_size=params['data']['max_val_size'],
-                                 max_test_size=params['data']['max_test_size'],
-                                 distributed=distributed)
+    if params['data']['loader'] == 'progressive':
+        loader = ProgressivePervasiveDataLoader(
+            src_infos,
+            src_h5,
+            tgt_infos,
+            tgt_h5,
+            batch_size,
+            params['data']['max_length'],
+            model_name,
+            epoch_size=params['data']['epoch_size'],
+            max_val_size=params['data']['max_val_size'],
+            max_test_size=params['data']['max_test_size'],
+            distributed=distributed)
+        params['data']['max_length'] = params['data']['max_length'] // 2
+    else:
+        loader = PervasiveDataLoader(
+            src_infos,
+            src_h5,
+            tgt_infos,
+            tgt_h5,
+            batch_size,
+            params['data']['max_length'],
+            model_name,
+            epoch_size=params['data']['epoch_size'],
+            max_val_size=params['data']['max_val_size'],
+            max_test_size=params['data']['max_test_size'],
+            distributed=distributed)
+
     # Define neural network.
     check_params(params, [
         'decoder.embedding_dim',
@@ -109,11 +126,11 @@ def build_learner(params, project_dir, pindex=0, comm_file=None):
         'network.efficient',
         'network.growth_rate',
     ])
-    # Max length is 2 more than setting to account for BOS and EOS.
+    # Max length is 1 more than setting to account for BOS.
     model = Pervasive(
         model_name, loader.src_vocab, loader.tgt_vocab,
-        params['network']['block_sizes'], params['data']['max_length'] + 2,
-        params['data']['max_length'] + 2, params['encoder']['embedding_dim'],
+        params['network']['block_sizes'], params['data']['max_length'] + 1,
+        params['data']['max_length'] + 1, params['encoder']['embedding_dim'],
         params['decoder']['embedding_dim'],
         params['encoder']['embedding_dropout'], params['network']['dropout'],
         params['decoder']['embedding_dropout'],

@@ -1,0 +1,22 @@
+model_name: densenet-l12
+default_config : config/default.yaml
+
+gpu_ids:
+  - 0
+
+network:
+  block_sizes:
+    - 12
+
+data:
+  batch_size: 32
+  epoch_size: 320000
+  loader: progressive
+  max_val_size: 3200
+  max_test_size: 3200
+  max_length: 50
+
+optim: 
+  seed: 3
+  lr: 0.0015
+  epochs: 20

@@ -333,6 +333,9 @@ class Pervasive(nn.Module):
     def forward(self, data):
         """
         Forward pass of `data` through the network.
+        
+        Adapted from https://github.com/elbayadm/attn2d/
+                             blob/master/nmt/models/pervasive.py
         """
         src_data, tgt_data = data.split([self.Ts, self.Tt], dim=1)
         src_emb = F.dropout(self.src_embedding(src_data), p=self.enc_dropout)
@@ -347,5 +350,7 @@ class Pervasive(nn.Module):
         X = self.relu(self.linear(X))
         X = self.prediction(self.prediction_dropout(X))
 
-        logits = F.log_softmax(X, dim=2)
+        # The target output does not have a BOS token, so it is one shorter
+        # than the input. Drop the extraneous final token here.
+        logits = F.log_softmax(X, dim=2)[:, :-1]
         return logits.permute(0, 2, 1)

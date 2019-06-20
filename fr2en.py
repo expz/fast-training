@@ -69,6 +69,8 @@ class PervasiveApp(object):
             params['data']['max_val_size'] = None
         if 'max_test_size' not in params['data']:
             params['data']['max_test_size'] = None
+        if 'loader' not in params['data']:
+            params['data']['loader'] = 'standard'
 
         project_dir = os.path.dirname(os.path.abspath(__file__))
         if 'model_name' not in params:
