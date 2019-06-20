@@ -2,7 +2,7 @@
 
 This project was developed when I was an Insight AI Fellow in the summer of 2019. It is in two parts. The first part has code for __fast training of a model__ that translates French sentences into English. The second part is a __small webapp__ that translates French sentences to English using a trained model.
 
-The model code used the Pervasive Attention repo (https://github.com/elbayadm/attn2d) as a reference implementation, although this implementation uses `fastai` and implements distributed parallel training.
+The model code used the Pervasive Attention repo (https://github.com/elbayadm/attn2d) as a reference implementation, although this implementation uses `fastai` and implements distributed parallel training. Unless marked with an attribution (see esp. docstrings at the beginning of classes and functions) all code is my own.
 
 ## Requisites
 
@@ -75,10 +75,11 @@ If you have a GPU installed on your system, then you can do training.
 
 Run the following commands from the root directory of the repository.
 
-1. Download and prepare the dataset. The process requires around 10Gb of disk space while running which decreases to 4GB when finished.
+1. Download and prepare the dataset. This requires over a GB of disk space.
 ```
-./build/prepare-wmt14.sh
+./build/prepare-wmt14 --small
 ```
+To prepare the full dataset, omit the `--small`. Preparation for the full dataset can take 15GB of disk space and 10-15 minutes on a fast computer. 
 
 2. Activate the virtual environment if it is not already activated.
 ```
