@@ -79,7 +79,7 @@ Run the following commands from the root directory of the repository.
 
 1. Download and prepare the dataset. This requires over a GB of disk space.
 ```
-yes | ./build/prepare-wmt14 --small
+./build/prepare-wmt14 --small
 ```
 To prepare the full dataset, omit the `--small`. Preparation for the full dataset can take 15GB of disk space and 10-15 minutes on a fast computer. 
 
