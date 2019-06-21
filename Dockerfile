@@ -1,10 +1,18 @@
 FROM python:3.6-alpine3.9
 
-RUN mkdir -p /app
+RUN mkdir -p /app \
+  && apk update \
+  && apk add \
+    g++ \
+    linux-headers \
+    musl-dev
 
 COPY requirements.txt /app
 
-RUN pip install -r /app/requirements.txt
+# RUN pip install -r /app/requirements.txt
+RUN pip install \
+    falcon \
+    gunicorn
 
 COPY src/ /app
 

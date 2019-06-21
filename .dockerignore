@@ -1,6 +1,8 @@
 **/README.md
+data/
+events/
 infra/
-venv/
+model/
 mt-fast-training/
 .git/
 .pytest_cache/
