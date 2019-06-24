@@ -6,11 +6,16 @@ It is based on the DenseNet convolutional network more commonly used for
 image recognition problems.
 """
 
+import functools
 import math
 import torch
 from torch import nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as cp
+
+
+# Cache most recent function result using @cache decorator.
+cache = functools.lru_cache(1)
 
 
 class Aggregator(nn.Module):
@@ -48,13 +53,13 @@ class MaskedConv2d(nn.Conv2d):
                                            groups=groups,
                                            dilation=dilation,
                                            bias=bias)
-        _, _, kH, kW = self.weight.size()
+        _, _, self.k, _ = self.weight.size()
         # Use `register_buffer()` so `mask` will be moved to a cuda device with
         # rest of the module.
         self.register_buffer(
             'mask', torch.zeros(self.weight.data.shape, dtype=torch.uint8))
-        if kH > 1:
-            self.mask[:, :, kH // 2 + 1:, :] = 1
+        if self.k > 1:
+            self.mask[:, :, self.k // 2 + 1:, :] = 1
         self.register_buffer(
             'zeros', torch.zeros(self.mask.shape, dtype=self.weight.data.dtype))
 
@@ -67,7 +72,8 @@ class DenseLayer(nn.Module):
     """
     Layer of a DenseNet.
     
-    Adapted from https://github.com/elbayadm/attn2d/blob/master/nmt/models/efficient_densenet.py
+    Adapted from https://github.com/elbayadm/attn2d/blob/
+                         master/nmt/models/efficient_densenet.py
     """
 
     def __init__(self,
@@ -140,7 +146,6 @@ class DenseBlock(nn.Module):
     https://github.com/elbayadm/attn2d/
             blob/master/nmt/models/efficient_densenet.py
     """
-    KERNEL_SIZE = 3
 
     def __init__(self,
                  num_layers,
@@ -151,10 +156,11 @@ class DenseBlock(nn.Module):
                  bias,
                  efficient=False):
         super(DenseBlock, self).__init__()
+        kernel_size = 3
         for i in range(num_layers):
             layer = DenseLayer(input_size + i * growth_rate,
                                growth_rate,
-                               self.KERNEL_SIZE,
+                               kernel_size,
                                bn_size,
                                dropout,
                                efficient=efficient)
@@ -260,8 +266,6 @@ class Pervasive(nn.Module):
             blob/master/nmt/models/pervasive.py
     """
 
-    PAD = 0
-
     def __init__(self,
                  name,
                  src_vocab,
@@ -280,14 +284,14 @@ class Pervasive(nn.Module):
                  bias=False,
                  efficient=False):
         nn.Module.__init__(self)
-        self.src_vocab_size = src_vocab.vocab_size
-        self.tgt_vocab_size = tgt_vocab.vocab_size
+        self.src_vocab = src_vocab
+        self.tgt_vocab = tgt_vocab
         self.Ts = Ts
         self.Tt = Tt
-        self.enc_dropout = enc_dropout
-        self.dec_dropout = dec_dropout
-        self.src_embedding = nn.Embedding(self.src_vocab_size, src_emb_size)
-        self.tgt_embedding = nn.Embedding(self.tgt_vocab_size, tgt_emb_size)
+        self.enc_dropout = nn.Dropout(enc_dropout)
+        self.dec_dropout = nn.Dropout(dec_dropout)
+        self.src_embedding = nn.Embedding(len(self.src_vocab), src_emb_size)
+        self.tgt_embedding = nn.Embedding(len(self.tgt_vocab), tgt_emb_size)
 
         self.input_channels = src_emb_size + tgt_emb_size
 
@@ -305,7 +309,7 @@ class Pervasive(nn.Module):
         self.relu = nn.ReLU(inplace=True)
 
         self.prediction_dropout = nn.Dropout(prediction_dropout)
-        self.prediction = nn.Linear(tgt_emb_size, self.tgt_vocab_size)
+        self.prediction = nn.Linear(tgt_emb_size, len(self.tgt_vocab))
         self.prediction.weight = self.tgt_embedding.weight
 
     def init_weights(self):
@@ -332,15 +336,29 @@ class Pervasive(nn.Module):
 
     def forward(self, data):
         """
+        Forward pass of `data` through network in a training context.
+        
+        Adapted from https://github.com/elbayadm/attn2d/
+                             blob/master/nmt/models/pervasive.py
+        """
+        Tt = data.shape[1] - self.Ts
+        src_data, tgt_data = data.split([self.Ts, Tt], dim=1)
+        X = self._forward(src_data, tgt_data)
+        # The target output does not have a BOS token, so it is one shorter
+        # than the input. Drop the extraneous final token here.
+        logits = F.log_softmax(X, dim=2)[:, :-1]
+        return logits.permute(0, 2, 1)
+
+    def _forward(self, src_data, tgt_data):
+        """
         Forward pass of `data` through the network.
         
         Adapted from https://github.com/elbayadm/attn2d/
                              blob/master/nmt/models/pervasive.py
         """
-        src_data, tgt_data = data.split([self.Ts, self.Tt], dim=1)
-        src_emb = F.dropout(self.src_embedding(src_data), p=self.enc_dropout)
-        tgt_emb = F.dropout(self.tgt_embedding(tgt_data), p=self.dec_dropout)
-        src_emb = src_emb.unsqueeze(1).repeat(1, self.Tt, 1, 1)
+        src_emb = self.enc_dropout(self.src_embedding(src_data))
+        tgt_emb = self.dec_dropout(self.tgt_embedding(tgt_data))
+        src_emb = src_emb.unsqueeze(1).repeat(1, tgt_data.shape[1], 1, 1)
         tgt_emb = tgt_emb.unsqueeze(2).repeat(1, 1, self.Ts, 1)
 
         X = torch.cat((src_emb, tgt_emb), dim=3)
@@ -349,8 +367,43 @@ class Pervasive(nn.Module):
         X = self.aggregator(X)
         X = self.relu(self.linear(X))
         X = self.prediction(self.prediction_dropout(X))
+        return X
 
-        # The target output does not have a BOS token, so it is one shorter
-        # than the input. Drop the extraneous final token here.
-        logits = F.log_softmax(X, dim=2)[:, :-1]
+    @cache
+    def get_bos_col(self, batch_size, device_id):
+        """
+        This functions allows us to define a column of BOS tokens
+        once for all using caching.
+        """
+        return torch.tensor(
+                [[self.tgt_vocab.bos]], dtype=torch.int64
+            ).repeat(batch_size, 1).to(torch.device(device_id))
+
+    def predict(self, data):
+        """
+        Forward pass of `data` through the network for prediction. It
+        should be of shape [batch_size, Ts + Tt]. The tgt_data it
+        contains should have beginning of sequence (BOS) tokens.
+
+        Adapted from https://github.com/elbayadm/attn2d/
+                             blob/master/nmt/models/pervasive.py
+        """
+        Tt = data.shape[1] - self.Ts
+        src_data, tgt_data = data.split([self.Ts, Tt], dim=1)
+        X = self._forward(src_data, tgt_data)
+        logits = F.log_softmax(X, dim=2)
         return logits.permute(0, 2, 1)
+
+    def _predict(self, src_data, tgt_data=None):
+        """
+        Predict next output token for each batch example based on `src_data`
+        and the previous output `tgt_data`. The output `tgt_data` should
+        not contain beginning of sequence (BOS) tokens.
+        """
+        bos_col = self.get_bos_col(src_data.shape[0], src_data.device.index)
+        if tgt_data is not None:
+            X = self._forward(src_data, torch.cat((bos_col, tgt_data), 1))
+        else:
+            X = self._forward(src_data, bos_col)
+        logits = F.log_softmax(X, dim=2)
+        return logits[:, -1, :]

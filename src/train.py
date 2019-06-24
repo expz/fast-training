@@ -10,9 +10,15 @@ import os
 import torch
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data import DataLoader
 
-from dataloader import PervasiveDataLoader, ProgressivePervasiveDataLoader
+from dataloader import (
+    PervasiveDataLoader, ProgressivePervasiveDataLoader, VocabData
+)
 from pervasive import Pervasive
+
+
+src_dir = os.path.dirname(os.path.abspath(__file__))
 
 
 def check_params(params, param_list):
@@ -28,6 +34,75 @@ def check_params(params, param_list):
         except (KeyError, TypeError):
             raise ValueError(f'Expected parameter "{param}" not supplied.')
 
+
+def build_learner_without_data(params, project_dir):
+    model_name = params['model_name']
+    model_dir = os.path.join(project_dir, 'model', model_name)
+    try:
+        # Try to make the directory for saving models.
+        os.makedirs(model_dir)
+    except FileExistsError:
+        pass
+
+    # Configure GPU/CPU device settings.
+    gpu_ids = params['gpu_ids']
+    if gpu_ids:
+        device_id = gpu_ids[0]
+        device_name = torch.cuda.get_device_name(device_id)
+        device = torch.device(device_id)
+        torch.cuda.set_device(device_id)
+    else:
+        device_id = None
+        device_name = 'cpu'
+        device = torch.device('cpu')
+
+    data_dir = params['data']['dir']
+    src_l = params['data']['src']
+    tgt_l = params['data']['tgt']
+    src_vocab = VocabData(os.path.join(data_dir, f'{src_l}.infos'))
+    tgt_vocab = VocabData(os.path.join(data_dir, f'{tgt_l}.infos'))
+
+    # Define neural network.
+    check_params(params, [
+        'decoder.embedding_dim',
+        'decoder.embedding_dropout',
+        'decoder.prediction_dropout',
+        'encoder.embedding_dim',
+        'encoder.embedding_dropout',
+        'network.bias',
+        'network.block_sizes',
+        'network.division_factor',
+        'network.dropout',
+        'network.efficient',
+        'network.growth_rate',
+    ])
+    # Max length is 1 more than setting to account for BOS.
+    model = Pervasive(
+        model_name, src_vocab, tgt_vocab,
+        params['network']['block_sizes'], params['data']['max_length'] + 1,
+        params['data']['max_length'] + 1, params['encoder']['embedding_dim'],
+        params['decoder']['embedding_dim'],
+        params['encoder']['embedding_dropout'], params['network']['dropout'],
+        params['decoder']['embedding_dropout'],
+        params['decoder']['prediction_dropout'],
+        params['network']['division_factor'], params['network']['growth_rate'],
+        params['network']['bias'], params['network']['efficient'])
+
+    model.init_weights()
+    dummy = torch.tensor([])
+    if device_id is not None:
+        if not torch.cuda.is_available():
+            raise ValueError(
+                'Request to train on GPU {device_id}, but not GPU found.')
+        model.cuda(device_id)
+        dummy.cuda(device_id)
+    dataset = torch.utils.data.TensorDataset(dummy, dummy)
+    data = DataBunch(DataLoader(dataset),
+                     DataLoader(dataset),
+                     DataLoader(dataset),
+                     device=device)
+    learn = Learner(data, model, loss_func=F.cross_entropy, model_dir=model_dir)
+    return learn, src_vocab, tgt_vocab
 
 def build_learner(params, project_dir, pindex=0, comm_file=None):
     """
@@ -150,7 +225,8 @@ def build_learner(params, project_dir, pindex=0, comm_file=None):
                      loader.loaders['val'],
                      loader.loaders['test'],
                      device=device)
-    return Learner(data, model, loss_func=F.cross_entropy, model_dir=model_dir)
+    learn = Learner(data, model, loss_func=F.cross_entropy, model_dir=model_dir)
+    return learn, loader.src_vocab, loader.tgt_vocab
 
 
 def train_worker(pindex,
@@ -175,7 +251,7 @@ def train_worker(pindex,
     if not os.getenv('RANK', None):
         os.environ['RANK'] = str(pindex)
 
-    learn = build_learner(params, project_dir, pindex, comm_file)
+    learn, _, _ = build_learner(params, project_dir, pindex, comm_file)
 
     # Restore saved model if necessary.
     epoch = None
@@ -213,3 +289,65 @@ def train_worker(pindex,
                         params['optim']['lr'],
                         tot_epochs=params['optim']['epochs'],
                         start_epoch=epoch)
+
+
+def bleu_score(hypotheses, references, lowercase=False):
+    """
+    Adapted from
+    https://pytorchnlp.readthedocs.io/en/latest/
+            _modules/torchnlp/metrics/bleu.html
+    """
+    hypotheses = np.array(hypotheses)
+    references = np.array(references)
+
+    if np.size(outputs) == 0:
+        return np.float(0.0)
+
+    # Get MOSES multi-bleu script
+    bleu_path = os.path.join(src_dir, 'multi-bleu.perl')
+    moses_url = (
+        "https://raw.githubusercontent.com/moses-smt/mosesdecoder/"
+        "master/scripts/generic/multi-bleu.perl")
+    try:
+        if not os.path.isfile(bleu_path):
+            urllib.request.urlretrieve(moses_url, filename=bleu_path)
+            os.chmod(bleu_path, 0o755)
+    except:
+        print("Unable to fetch multi-bleu.perl script")
+        print(
+            traceback.format_exception_only(sys.last_type, sys.last_value))
+        return None
+
+    # Dump hypotheses and references to tempfiles
+    hypothesis_file = tempfile.NamedTemporaryFile()
+    hypothesis_file.write("\n".join(hypotheses).encode("utf-8"))
+    hypothesis_file.write(b"\n")
+    hypothesis_file.flush()
+    reference_file = tempfile.NamedTemporaryFile()
+    reference_file.write("\n".join(references).encode("utf-8"))
+    reference_file.write(b"\n")
+    reference_file.flush()
+
+    # Calculate BLEU using multi-bleu script
+    with open(hypothesis_file.name, "r") as read_pred:
+        bleu_cmd = [bleu_path]
+        if lowercase:
+            bleu_cmd += ["-lc"]
+        bleu_cmd += [reference_file.name]
+        try:
+            bleu_out = subprocess.check_output(bleu_cmd, stdin=read_pred, stderr=subprocess.STDOUT)
+            bleu_out = bleu_out.decode("utf-8")
+            bleu_score = re.search(r"BLEU = (.+?),", bleu_out).group(1)
+            bleu_score = float(bleu_score)
+            bleu_score = np.float32(bleu_score)
+        except subprocess.CalledProcessError as error:
+            if error.output is not None:
+                print("multi-bleu.perl script returned non-zero exit code")
+                print(error.output)
+            bleu_score = None
+
+    # Close temp files
+    hypothesis_file.close()
+    reference_file.close()
+
+    return bleu_score

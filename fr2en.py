@@ -9,7 +9,8 @@ import streamlit
 import torch
 import yaml
 
-from train import build_learner, train_worker
+from train import build_learner, build_learner_without_data, train_worker
+from evaluate import beam_search
 
 
 def load_defaults(params, defaults):
@@ -55,6 +56,7 @@ class PervasiveApp(object):
             params['gpu_ids'] = gpu_ids
             if not isinstance(gpu_ids, list):
                 gpu_ids = [gpu_ids]
+            gpu_ids = list(map(lambda s: int(s), gpu_ids))
         if 'optim' not in params:
             params['optim'] = {}
         if lr is not None:
@@ -77,6 +79,22 @@ class PervasiveApp(object):
             raise ValueError('Expected parameter "model_name" not supplied.')
 
         return params, project_dir
+
+    def _restore(self, learn, filename):
+        """
+        Load the model saved at `filename` if it exists.
+        """
+        if filename is not None:
+            try:
+                # Remove extension if provided to match `load()`'s expectation.
+                if filename[-4:] == '.pth':
+                    filename = filename[:-4]
+                learn.load(filename, purge=False)
+                print(f'Loaded model {filename}.')
+            except FileNotFoundError:
+                print(f'The model file {learn.model_dir}/{filename}.pth '
+                          'was not found!')
+                return
 
     def train(self,
               config,
@@ -115,6 +133,46 @@ class PervasiveApp(object):
                                     nprocs=len(params['gpu_ids']),
                                     join=True)
 
+    def example(self, config, gpu_id=0, restore=None, batch=None):
+        """
+        Print a list of `batch` many example translations. This function
+        requires the `restore` argument to be most useful. `restore` should be
+        the path of the saved model relative to the current model's folder.
+        The current model is specified by the `name` field in the config.
+        """
+        params, project_dir = \
+            self._parse_args(config, [gpu_id], batch_size=batch)
+        learn, src_vocab, tgt_vocab = build_learner(params, project_dir)
+        self._restore(learn, restore)
+        batch, tgt = next(iter(learn.data.valid_dl))
+        src_data, tgt_data = \
+            batch.split([learn.model.Ts, learn.model.Tt], dim=1)
+        src_text = src_vocab.to_text(src_data)
+        out_data = beam_search(learn, src_data, 5, params['data']['max_length'])
+        out_text = tgt_vocab.to_text(out_data)
+        for src, out in zip(src_text, out_text):
+            print(f'IN: {src}')
+            print(f'OUT: {out}')
+
+    def translate(self, config, src_text, gpu_id=0, restore=None):
+        """
+        Translates a single sentence using the model saved at `restore`.
+
+        TODO: For better performance, this should parse `src_text` using
+              byte-pair encoding (BPE).
+        """
+        params, project_dir = \
+            self._parse_args(config, [gpu_id], batch_size=1)
+        learn, src_vocab, tgt_vocab = \
+            build_learner_without_data(params, project_dir)
+        self._restore(learn, restore)
+        src_data = torch.tensor(
+            [src_vocab.to_ints(src_text, params['data']['max_length'] + 1)]
+        ).to(torch.device(gpu_id))
+        out_data = beam_search(learn, src_data, 5, params['data']['max_length'])
+        out_text = tgt_vocab.to_text(out_data)[0]
+        print(out_text)
+
     def find_lr(self, config, gpu_id=0):
         """
         Search for an optimal learning rate and print plot to Streamlit.
@@ -124,7 +182,7 @@ class PervasiveApp(object):
         print('************************************************************\n')
         params, project_dir = self._parse_args(config, [gpu_id])
         params['gpu_ids'] = [gpu_id] if gpu_id is not None else []
-        learn = build_learner(params, project_dir)
+        learn, _, _ = build_learner(params, project_dir)
 
         streamlit.title('Find the best learning rate')
         streamlit.header(f'Model {params["model_name"]}')
@@ -141,7 +199,7 @@ class PervasiveApp(object):
         Print a summary of the model architecture described by file `config`.
         """
         params, project_dir = self._parse_args(config)
-        learn = build_learner(params, project_dir)
+        learn, _, _ = build_learner(params, project_dir)
         print(learn.summary())
 
 
