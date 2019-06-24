@@ -9,8 +9,8 @@ network:
     - 12
 
 data:
-  batch_size: 8
-  epoch_size: 320000
+  batch_size: 32
+  epoch_size: 32000
   max_val_size: 3200
   max_test_size: 3200
   max_length: 50
