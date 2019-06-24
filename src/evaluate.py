@@ -1,4 +1,11 @@
+import numpy as np
+import os
+import re
+import subprocess
+import tempfile
 import torch
+import traceback
+import urllib
 
 
 def beam_search(learn, src_data, beam_size, max_length):
@@ -77,3 +84,70 @@ def beam_search(learn, src_data, beam_size, max_length):
             assert(list(tgt_data.shape) == [batch_size, beam_size, j+1])
 
     return tgt_data[:, 0, :]
+
+
+def bleu_score(hypotheses, references, lowercase=False):
+    """
+    Adapted from
+    https://pytorchnlp.readthedocs.io/en/latest/
+            _modules/torchnlp/metrics/bleu.html
+    """
+    if isinstance(hypotheses, list):
+        hypotheses = np.array(hypotheses)
+    if isinstance(references, list):
+        references = np.array(references)
+
+    if np.size(hypotheses) == 0:
+        return np.float32(0.0)
+
+    # Get MOSES multi-bleu script
+    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    src_dir = os.path.join(project_dir, 'data', 'mosesdecoder')
+    bleu_path = os.path.join(src_dir, 'scripts', 'generic', 'multi-bleu.perl')
+    moses_url = (
+        "https://raw.githubusercontent.com/moses-smt/mosesdecoder/"
+        "master/scripts/generic/multi-bleu.perl")
+    try:
+        if not os.path.isfile(bleu_path):
+            os.makedirs(os.path.dirname(bleu_path), exist_ok=True)
+            urllib.request.urlretrieve(moses_url, filename=bleu_path)
+            os.chmod(bleu_path, 0o755)
+    except:
+        print("Unable to fetch multi-bleu.perl script")
+        print(
+            traceback.format_exception_only(sys.last_type, sys.last_value))
+        return None
+
+    # Dump hypotheses and references to tempfiles
+    hypothesis_file = tempfile.NamedTemporaryFile()
+    hypothesis_file.write("\n".join(hypotheses).encode("utf-8"))
+    hypothesis_file.write(b"\n")
+    hypothesis_file.flush()
+    reference_file = tempfile.NamedTemporaryFile()
+    reference_file.write("\n".join(references).encode("utf-8"))
+    reference_file.write(b"\n")
+    reference_file.flush()
+
+    # Calculate BLEU using multi-bleu script
+    with open(hypothesis_file.name, "r") as read_pred:
+        bleu_cmd = [bleu_path]
+        if lowercase:
+            bleu_cmd += ["-lc"]
+        bleu_cmd += [reference_file.name]
+        try:
+            bleu_out = subprocess.check_output(bleu_cmd, stdin=read_pred, stderr=subprocess.STDOUT)
+            bleu_out = bleu_out.decode("utf-8")
+            bleu_score = re.search(r"BLEU = (.+?),", bleu_out).group(1)
+            bleu_score = float(bleu_score)
+            bleu_score = np.float32(bleu_score)
+        except subprocess.CalledProcessError as error:
+            if error.output is not None:
+                print("multi-bleu.perl script returned non-zero exit code")
+                print(error.output)
+            bleu_score = None
+
+    # Close temp files
+    hypothesis_file.close()
+    reference_file.close()
+
+    return bleu_score
