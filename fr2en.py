@@ -61,13 +61,13 @@ class PervasiveApp(object):
         if 'optim' not in params:
             params['optim'] = {}
         if lr is not None:
-            params['optim']['lr'] = lr
+            params['optim']['lr'] = float(lr)
         if epochs is not None:
-            params['optim']['epochs'] = epochs
+            params['optim']['epochs'] = int(epochs)
         if batch_size is not None:
-            params['data']['batch_size'] = batch_size
+            params['data']['batch_size'] = int(batch_size)
         if epoch_size is not None:
-            params['data']['epoch_size'] = epoch_size
+            params['data']['epoch_size'] = int(epoch_size)
         if 'max_val_size' not in params['data']:
             params['data']['max_val_size'] = None
         if 'max_test_size' not in params['data']:
