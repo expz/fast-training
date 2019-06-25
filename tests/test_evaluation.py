@@ -1,5 +1,5 @@
-from bleu import corpus_bleu
-from evaluate import bleu_score
+from bleu import bleu_score
+from evaluate import moses_bleu_score
 import math
 import numpy
 import random
@@ -8,35 +8,35 @@ import random
 def test_perfect_bleu():
     hypotheses = ['a b c d']
     references = [['a b c d']]
-    bleus, _ = corpus_bleu(hypotheses, references)
-    assert(isinstance(bleus[0], float))
-    assert(bleus[0] == 1.0)
+    bleu = bleu_score(hypotheses, references)
+    assert(isinstance(bleu, float))
+    assert(bleu == 1.0)
 
 
 def test_less_than_four_bleu():
     """Moses BLEU is 0 when there are no matching 4-grams."""
     hypotheses = ['a b c']
     references = [['a b c']]
-    bleus, _ = corpus_bleu(hypotheses, references)
-    assert(bleus[0] == 0.0)
+    bleu = bleu_score(hypotheses, references)
+    assert(bleu == 0.0)
 
 
 def test_empty_bleu():
     hypotheses = []
     references = []
-    bleus, _ = corpus_bleu(hypotheses, references)
-    assert(bleus[0] == 0.0)
+    bleu = bleu_score(hypotheses, references)
+    assert(bleu == 0.0)
 
 
 def test_same_size_bleu():
     hypotheses = ['a b c d f']
     references = [['a b c d e']]
     epsilon = 1e-2
-    bleu = math.exp(
+    bleu1 = math.exp(
         (math.log(4.0/5) + math.log(3.0/4) + math.log(2.0/3) + math.log(1.0/2))
         / 4)
-    bleus, _ = corpus_bleu(hypotheses, references)
-    assert(abs(bleu - bleus[0]) < epsilon)
+    bleu2 = bleu_score(hypotheses, references)
+    assert(abs(bleu1 - bleu2) < epsilon)
 
 
 def test_agreement_moses_same_size():
@@ -59,6 +59,13 @@ def test_agreement_moses_same_size():
             hyp[j] = hyp[i]
             hyp[i] = t
         hyp_str = ' '.join(hyp)
-        bleus, _ = corpus_bleu([hyp_str], [[ref_str]])
-        bleu = bleu_score([hyp_str], [ref_str])
-        assert(abs(bleus[0] * 100.0 - bleu) < epsilon)
+        bleu1 = bleu_score([hyp_str], [[ref_str]]) * 100.0
+        bleu2 = moses_bleu_score([hyp_str], [ref_str])
+        assert(abs(bleu1 - bleu2) < epsilon)
+
+
+def test_test():
+    out = "This is my intention and I ask this House to provide the wider support to this report."
+    tgt = "That is my intention and I would ask the House to give this report overwhelming support!"
+    assert(bleu_score([out], [[tgt]]) == 0.0)
+

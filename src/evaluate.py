@@ -86,7 +86,7 @@ def beam_search(learn, src_data, beam_size, max_length):
     return tgt_data[:, 0, :]
 
 
-def bleu_score(hypotheses, references, lowercase=False):
+def moses_bleu_score(hypotheses, references, lowercase=False):
     """
     Adapted from
     https://pytorchnlp.readthedocs.io/en/latest/

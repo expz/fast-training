@@ -16,6 +16,11 @@ from __future__ import unicode_literals
 import math
 import copy
 
+
+def bleu_score(hypothesis, references, max_n=4):
+    bleus, _ = corpus_bleu(hypothesis, references, max_n)
+    return bleus[0]
+
 def bleu_count(hypothesis, references, max_n=4):
     ret_len_hyp = 0
     ret_len_ref = 0
