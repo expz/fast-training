@@ -10,7 +10,7 @@ from fastai.train import validate, Learner
 from fastprogress.fastprogress import format_time
 import os
 import pandas as pd
-from time import time
+import time
 import torch
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
@@ -110,7 +110,7 @@ def build_learner_without_data(params, project_dir):
     learn = Learner(data, model, loss_func=F.cross_entropy, model_dir=model_dir)
     return learn, src_vocab, tgt_vocab
 
-def build_learner(params, project_dir, pindex=0, comm_file=None):
+def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
     """
     Builds a fastai `Learner` object containing the model and data specified by
     `params`. It is configured to run on GPU `device_id`. Assumes it is GPU
@@ -240,7 +240,8 @@ def train_worker(pindex,
                  params,
                  comm_file=None,
                  checkpoint=None,
-                 restore=None):
+                 restore=None,
+                 queues=None):
     """
     Trains the model as specified by `params` on GPU `gpu_ids[pindex]`.
     Uses `comm_file` to communicate between processes.
@@ -257,7 +258,7 @@ def train_worker(pindex,
     if not os.getenv('RANK', None):
         os.environ['RANK'] = str(pindex)
 
-    learn, _, _ = build_learner(params, project_dir, pindex, comm_file)
+    learn, _, _ = build_learner(params, project_dir, pindex, comm_file, queues)
 
     # Restore saved model if necessary.
     epoch = None
@@ -288,7 +289,7 @@ def train_worker(pindex,
         SaveModelCallback(learn, every='epoch', name='model'),
         CSVLogger(learn, csv_fn),
     ]
-    learn.metrics.append(BLEUScoreMetric(learn, 5))
+    learn.metrics.append(BLEUScoreMetric(learn, 5, queues, pindex))
 
     # Train with a one cycle schedule for each epoch.
     check_params(params, [
@@ -303,20 +304,21 @@ def train_worker(pindex,
 
 class CSVLogger(LearnerCallback):
     """
-    This is straight from the fastai library. It is copied here so a small
-    change can be made that flushes the log after every write so that you
-    can follow the log during training. Otherwise the log is only written
-    when the training finishes. Original:
-
-    https://github.com/fastai/fastai/blob/master/fastai/callbacks/csv_logger.py
-
     A `LearnerCallback` that saves history of metrics while training
     `learn` into CSV `filename`.
+
+    This is adapted from the fastai library. It is copied here so the file
+    writes can be written using `with` blocks. This (1) forces the files to
+    flush the log after every write (2) allows multiple processes to write
+    to the file in the distributed training setting. Original:
+
+    https://github.com/fastai/fastai/blob/master/fastai/callbacks/csv_logger.py
     """
 
     def __init__(self, learn:Learner, filename: str = 'history', append: bool = False):
         super().__init__(learn)
-        self.filename,self.path,self.append = filename,self.learn.path/f'{filename}.csv',append
+        self.filename, self.append = filename, append
+        self.path = self.learn.path/f'{filename}.csv'
         self.add_time = True
 
     def read_logged_file(self):
@@ -326,39 +328,52 @@ class CSVLogger(LearnerCallback):
     def on_train_begin(self, **kwargs):
         "Prepare file with metric names."
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.file = self.path.open('a') if self.append else self.path.open('w')
-        self.file.write(','.join(self.learn.recorder.names[:(None if self.add_time else -1)]) + '\n')
-        self.file.flush()
+        names = self.learn.recorder.names[:(None if self.add_time else -1)]
+        header = ','.join(names) + '\n'
+        if self.append:
+            with self.path.open('a') as f:
+                f.write(header)
+        else:
+            with self.path.open('w') as f:
+                f.write(header)
 
     def on_epoch_begin(self, **kwargs):
-        if self.add_time: self.start_epoch = time()
+        if self.add_time: self.start_epoch = time.time()
 
     def on_epoch_end(self, epoch, smooth_loss, last_metrics, **kwargs):
         "Add a line with `epoch` number, `smooth_loss` and `last_metrics`."
         last_metrics = last_metrics if last_metrics is not None else []
-        stats = [str(stat) if isinstance(stat, int) else '#na#' if stat is None else f'{stat:.6f}'
-                 for name, stat in zip(self.learn.recorder.names, [epoch, smooth_loss] + last_metrics)]
-        if self.add_time: stats.append(format_time(time() - self.start_epoch))
+        metrics = zip(self.learn.recorder.names,
+                      [epoch, smooth_loss] + last_metrics)
+        stats = [
+            str(stat) if isinstance(stat, int) else '#na#'
+            if stat is None else f'{stat:.6f}'
+            for name, stat in metrics
+        ]
+        if self.add_time:
+            stats.append(format_time(time.time() - self.start_epoch))
         str_stats = ','.join(stats)
-        self.file.write(str_stats + '\n')
-        self.file.flush()
-
-    def on_train_end(self, **kwargs):
-        "Close the file."
-        self.file.close()
+        with self.path.open('a') as f:
+            f.write(str_stats + '\n')
 
 
 class BLEUScoreMetric(LearnerCallback):
-    def __init__(self, learn, beam_size=5):
+    def __init__(self, learn, beam_size=5, queues=None, pindex=None):
         super().__init__(learn)
         self.name = 'bleu'
         self.beam_size = beam_size
-        self.eos = learn.model.tgt_vocab.eos
-        self.pad = learn.model.tgt_vocab.pad
-
-    def on_train_begin(self, **kwargs):
-        #self.learn.recorder.add_metric_names(['bleu'])
-        pass
+        if isinstance(learn.model, DistributedDataParallel):
+            self.tgt_vocab = learn.model.module.tgt_vocab
+            self.Ts = self.learn.model.module.Ts
+            self.Tt = self.learn.model.module.Tt
+        else:
+            self.tgt_vocab = learn.model.tgt_vocab
+            self.Ts = self.learn.model.Ts
+            self.Tt = self.learn.model.Tt
+        self.eos = self.tgt_vocab.eos
+        self.pad = self.tgt_vocab.pad
+        self.queues = queues
+        self.pindex = pindex
 
     def on_epoch_begin(self, **kwargs):
         self.bleu, self.count = 0.0, 0
@@ -366,22 +381,20 @@ class BLEUScoreMetric(LearnerCallback):
     def on_batch_begin(self, last_input, last_target, train, **kwargs):
         if not train:
             batch_size = last_input.size(0)
-            Ts = self.learn.model.Ts
-            Tt = last_input.size(1) - Ts
-            src_data, tgt_data = last_input.split([Ts, Tt], dim=1)
+            src_data, tgt_data = last_input.split([self.Ts, self.Tt], dim=1)
             out_data = beam_search(
-                self.learn, src_data, self.beam_size, self.learn.model.Tt - 1)
-            assert(list(out_data.shape) == [batch_size, Tt - 1])
+                self.learn, src_data, self.beam_size, self.Tt - 1)
+            assert(list(out_data.shape) == [batch_size, self.Tt - 1])
             bleu = 0.0
             for b in range(batch_size):
                 out_l = []
-                for i in range(Tt - 1):
+                for i in range(self.Tt - 1):
                     if (out_data[b][i].item() == self.eos
                             or out_data[b][i].item() == self.pad):
                         break
                     out_l.append(str(out_data[b][i].item()))
                 tgt_l = []
-                for i in range(1, Tt):
+                for i in range(1, self.Tt):
                     if (tgt_data[b][i].item() == self.eos
                             or tgt_data[b][i].item() == self.pad):
                         # The Moses BLEU score script gives 0 for sentences of
@@ -396,4 +409,23 @@ class BLEUScoreMetric(LearnerCallback):
 
     def on_epoch_end(self, last_metrics, train, **kwargs):
         if not train:
+            for i, q in enumerate(self.queues):
+                if i != self.pindex:
+                    q.put((self.count, self.bleu))
+            qs = len(self.queues) - 1
+            i = 0
+            max_iter = 20
+            while qs > 0 and i < max_iter:
+                while not self.queues[self.pindex].empty():
+                    c, b = self.queues[self.pindex].get()
+                    self.count += c
+                    self.bleu += b
+                    qs -= 1
+                if qs > 0:
+                    time.sleep(0.1)
+                    i += 1
+            if i == max_iter:
+                print(f'WARNING: process {self.pindex} did not receive bleu '
+                      'scores from all sibling processes. bleu scores will '
+                      'not reflect all data.')
             return {'last_metrics': last_metrics + [self.bleu / self.count]}

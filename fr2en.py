@@ -4,6 +4,7 @@ This script launches model training in separate processes, one for each GPU.
 """
 
 import fire
+import multiprocessing
 import os
 import streamlit
 import torch
@@ -127,9 +128,11 @@ class PervasiveApp(object):
         os.environ['MASTER_ADDR'] = '127.0.0.1'
         os.environ['MASTER_PORT'] = '3892'
         os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4,5,6,7'
+        m = multiprocessing.Manager()
+        qs = [m.Queue() for _ in range(len(params['gpu_ids']))]
         torch.multiprocessing.spawn(train_worker,
                                     args=(project_dir, params, comm_file,
-                                          checkpoint, restore),
+                                          checkpoint, restore, qs),
                                     nprocs=len(params['gpu_ids']),
                                     join=True)
 

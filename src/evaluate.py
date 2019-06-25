@@ -4,6 +4,7 @@ import re
 import subprocess
 import tempfile
 import torch
+from torch.nn.parallel import DistributedDataParallel
 import traceback
 import urllib
 
@@ -20,6 +21,8 @@ def beam_search(learn, src_data, beam_size, max_length):
     """
     batch_size = src_data.shape[0]
     model = learn.model
+    if isinstance(model, DistributedDataParallel):
+        model = model.module
     offsets = torch.tensor(
         range(0, batch_size * beam_size * beam_size, beam_size * beam_size),
         dtype=torch.int64).to(src_data.device)
