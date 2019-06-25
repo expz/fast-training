@@ -5,7 +5,8 @@ These functions implement machine translation model training.
 from collections import OrderedDict
 from datetime import datetime
 from fastai.basic_data import DataBunch
-from fastai.callbacks.tracker import LearnerCallback, SaveModelCallback
+from fastai.callbacks import LearnerCallback, SaveModelCallback
+from fastai.callbacks.tensorboard import LearnerTensorboardWriter
 from fastai.train import validate, Learner
 from fastprogress.fastprogress import format_time
 import os
@@ -282,12 +283,15 @@ def train_worker(pindex,
                 pass
 
     # Callbacks.
-    learn.path = learn.path / 'model' / learn.model_dir.split('/')[-1]
+    logs_path = learn.path / 'logs'
     ts = datetime.now().strftime('%Y%m%dT%H%M%S')
-    csv_fn = f'log-{params["model_name"]}-{ts}'
+    csv_fn = f'logs/{params["model_name"]}/log-{params["model_name"]}-{ts}'
+    tbwriter = LearnerTensorboardWriter(learn, logs_path, params['model_name'])
+    tbwriter.metrics_root = 'metrics/'
     learn.callbacks = [
         SaveModelCallback(learn, every='epoch', name='model'),
         CSVLogger(learn, csv_fn),
+        tbwriter,
     ]
     learn.metrics.append(BLEUScoreMetric(learn, 5, queues, pindex))
 

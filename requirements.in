@@ -7,4 +7,6 @@ numpy
 PyYAML
 streamlit
 subword-nmt
+tensorboard
+tensorboardX
 torch
