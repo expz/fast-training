@@ -252,16 +252,23 @@ class PervasiveDataLoader(object):
             self.datasets[dsname] = torch.utils.data.TensorDataset(srctgt, tgt2)
             # Hack to please fastai Learner.summary().
             self.datasets[dsname].is_empty = False
-            # Define dataloader with distributed sampler.
+            # Training set is currently sampled randomly for training
+            # and deterministically for validation and test.
             if distributed:
-                sampler = DistributedSubSampler(self.datasets[dsname],
-                                                epoch_size=epoch_sz)
+                if dsname == 'train':
+                    sampler = DistributedSubSampler(self.datasets[dsname],
+                                                    epoch_size=epoch_sz)
+                else:
+                    sampler = DistributedSampler(self.datasets[dsname])
             else:
-                # TODO: Define a non-distributed sub-sampler
-                #       without replacement.
-                sampler = RandomSampler(self.datasets[dsname],
-                                        replacement=True,
-                                        num_samples=epoch_sz)
+                if dsname == 'train':
+                    # TODO: Define a non-distributed sub-sampler
+                    #       without replacement.
+                    sampler = RandomSampler(self.datasets[dsname],
+                                            replacement=True,
+                                            num_samples=epoch_sz)
+                else:
+                    sampler = None
             self.loaders[dsname] = DataLoader(
                 self.datasets[dsname],
                 batch_size=self.batch_size,
