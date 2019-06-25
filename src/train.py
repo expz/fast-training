@@ -3,18 +3,24 @@ These functions implement machine translation model training.
 """
 
 from collections import OrderedDict
+from datetime import datetime
 from fastai.basic_data import DataBunch
-from fastai.callbacks.tracker import LearnerCallback, SaveModelCallback, TrackerCallback
+from fastai.callbacks.tracker import LearnerCallback, SaveModelCallback
 from fastai.train import validate, Learner
+from fastprogress.fastprogress import format_time
 import os
+import pandas as pd
+from time import time
 import torch
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader
 
+from bleu import bleu_score
 from dataloader import (
     PervasiveDataLoader, ProgressivePervasiveDataLoader, VocabData
 )
+from evaluate import beam_search
 from pervasive import Pervasive
 
 
@@ -261,9 +267,6 @@ def train_worker(pindex,
             if restore[-4:] == '.pth':
                 restore = restore[:-4]
             learn.load(restore, purge=False)
-            if pindex == 0:
-                # Only print once even with multiple workers.
-                print(f'Loaded model {restore}.')
         except FileNotFoundError:
             if pindex == 0:
                 # Only print once even with mulitple workers.
@@ -278,7 +281,14 @@ def train_worker(pindex,
                 pass
 
     # Callbacks.
-    learn.callbacks = [SaveModelCallback(learn, every='epoch', name='model')]
+    learn.path = learn.path / 'model' / learn.model_dir.split('/')[-1]
+    ts = datetime.now().strftime('%Y%m%dT%H%M%S')
+    csv_fn = f'log-{params["model_name"]}-{ts}'
+    learn.callbacks = [
+        SaveModelCallback(learn, every='epoch', name='model'),
+        CSVLogger(learn, csv_fn),
+    ]
+    learn.metrics.append(BLEUScoreMetric(learn, 5))
 
     # Train with a one cycle schedule for each epoch.
     check_params(params, [
@@ -289,3 +299,101 @@ def train_worker(pindex,
                         params['optim']['lr'],
                         tot_epochs=params['optim']['epochs'],
                         start_epoch=epoch)
+
+
+class CSVLogger(LearnerCallback):
+    """
+    This is straight from the fastai library. It is copied here so a small
+    change can be made that flushes the log after every write so that you
+    can follow the log during training. Otherwise the log is only written
+    when the training finishes. Original:
+
+    https://github.com/fastai/fastai/blob/master/fastai/callbacks/csv_logger.py
+
+    A `LearnerCallback` that saves history of metrics while training
+    `learn` into CSV `filename`.
+    """
+
+    def __init__(self, learn:Learner, filename: str = 'history', append: bool = False):
+        super().__init__(learn)
+        self.filename,self.path,self.append = filename,self.learn.path/f'{filename}.csv',append
+        self.add_time = True
+
+    def read_logged_file(self):
+        "Read the content of saved file"
+        return pd.read_csv(self.path)
+
+    def on_train_begin(self, **kwargs):
+        "Prepare file with metric names."
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.file = self.path.open('a') if self.append else self.path.open('w')
+        self.file.write(','.join(self.learn.recorder.names[:(None if self.add_time else -1)]) + '\n')
+        self.file.flush()
+
+    def on_epoch_begin(self, **kwargs):
+        if self.add_time: self.start_epoch = time()
+
+    def on_epoch_end(self, epoch, smooth_loss, last_metrics, **kwargs):
+        "Add a line with `epoch` number, `smooth_loss` and `last_metrics`."
+        last_metrics = last_metrics if last_metrics is not None else []
+        stats = [str(stat) if isinstance(stat, int) else '#na#' if stat is None else f'{stat:.6f}'
+                 for name, stat in zip(self.learn.recorder.names, [epoch, smooth_loss] + last_metrics)]
+        if self.add_time: stats.append(format_time(time() - self.start_epoch))
+        str_stats = ','.join(stats)
+        self.file.write(str_stats + '\n')
+        self.file.flush()
+
+    def on_train_end(self, **kwargs):
+        "Close the file."
+        self.file.close()
+
+
+class BLEUScoreMetric(LearnerCallback):
+    def __init__(self, learn, beam_size=5):
+        super().__init__(learn)
+        self.name = 'bleu'
+        self.beam_size = beam_size
+        self.eos = learn.model.tgt_vocab.eos
+        self.pad = learn.model.tgt_vocab.pad
+
+    def on_train_begin(self, **kwargs):
+        #self.learn.recorder.add_metric_names(['bleu'])
+        pass
+
+    def on_epoch_begin(self, **kwargs):
+        self.bleu, self.count = 0.0, 0
+
+    def on_batch_begin(self, last_input, last_target, train, **kwargs):
+        if not train:
+            batch_size = last_input.size(0)
+            Ts = self.learn.model.Ts
+            Tt = last_input.size(1) - Ts
+            src_data, tgt_data = last_input.split([Ts, Tt], dim=1)
+            out_data = beam_search(
+                self.learn, src_data, self.beam_size, self.learn.model.Tt - 1)
+            assert(list(out_data.shape) == [batch_size, Tt - 1])
+            bleu = 0.0
+            for b in range(batch_size):
+                out_l = []
+                for i in range(Tt - 1):
+                    if (out_data[b][i].item() == self.eos
+                            or out_data[b][i].item() == self.pad):
+                        break
+                    out_l.append(str(out_data[b][i].item()))
+                tgt_l = []
+                for i in range(1, Tt):
+                    if (tgt_data[b][i].item() == self.eos
+                            or tgt_data[b][i].item() == self.pad):
+                        # The Moses BLEU score script gives 0 for sentences of
+                        # length less than four, so ignore those BLEU score.
+                        if i < 4:
+                            batch_size -= 1
+                        break
+                    tgt_l.append(str(tgt_data[b][i].item()))
+                bleu += bleu_score([' '.join(out_l)], [[' '.join(tgt_l)]]) * 100
+            self.count += batch_size
+            self.bleu += bleu
+
+    def on_epoch_end(self, last_metrics, train, **kwargs):
+        if not train:
+            return {'last_metrics': last_metrics + [self.bleu / self.count]}
