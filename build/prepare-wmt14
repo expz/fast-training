@@ -61,11 +61,11 @@ fi
 if [ "$1" = '--small' ]; then
   echo "using small dataset"
   URLS=(
-    "http://www.statmt.org/europarl/v7/${src}-${tgt}.tgz"
+    "http://www.statmt.org/wmt14/training-parallel-nc-v9.tgz"
     "http://www.statmt.org/wmt14/test-full.tgz"
   )
   CORPORA=(
-    "europarl-v7.${src}-${tgt}"
+    "training/news-commentary-v9.${src}-${tgt}"
   )
 else
   echo "using full dataset"
@@ -195,7 +195,7 @@ for L in $src $tgt; do
 done
 
 if prompt "Transform data into HDF5 files (y/n)? " ; then
-  "$project_dir/build/preprocess.py" -d "$data_dir/wmt_fr_en/" --src "$src" --trg "$tgt" --max_length 200
+  "$project_dir/build/preprocess.py" -d "wmt_${src}_${tgt}/" --src "$src" --trg "$tgt" --max_length 200
 fi
 
 if prompt "Delete temp files (y/n)? " ; then
