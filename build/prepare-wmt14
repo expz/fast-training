@@ -7,6 +7,9 @@
 # Exit on error.
 set -e
 
+# Number of BPE tokens.
+bpe_tokens=16384
+
 script_dir="$(dirname "$(readlink -f "$BASH_SOURCE")")"
 
 . "$script_dir/util.sh"
@@ -78,9 +81,6 @@ else
     "training/news-commentary-v9.${src}-${tgt}"
   )
 fi
-
-# BPE tokens.
-BPE_TOKENS=30000
 
 mkdir -p $data_dir $tmp $download
 
@@ -173,7 +173,7 @@ bpe_code=$data_dir/bpe_code
 
 if prompt "Learn BPE (y/n)? " ; then
   echo "learn_bpe.py on ${train}..."
-  subword-nmt learn-bpe -s $BPE_TOKENS < $train > $bpe_code
+  subword-nmt learn-bpe -s $bpe_tokens < $train > $bpe_code
 fi
 
 if prompt "Apply BPE (y/n)? " ; then

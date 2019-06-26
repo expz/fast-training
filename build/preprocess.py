@@ -1,27 +1,22 @@
 #!/usr/bin/env python3
-#
-# This scripts is copied from
-#
-#   https://github.com/elbayadm/attn2d/blob/master/preprocess.py
-#
 
 """
-Main per-processing script
+This script is a modified version of 
+
+https://github.com/elbayadm/attn2d/blob/master/preprocess.py
+
+This script prepares the final dataset and vocabulary files.
 """
 
-import os.path as osp
 import argparse
 import h5py
 import numpy as np
+import os
 import pickle
 
 
 def pdump(obj, path):
-    """
-    Picke dump
-    """
-    pickle.dump(obj, open(path, 'wb'),
-                protocol=pickle.HIGHEST_PROTOCOL)
+    pickle.dump(obj, open(path, 'wb'), protocol=pickle.HIGHEST_PROTOCOL)
 
 
 def build_vocab(sentences, max_words, vocab_file):
@@ -109,9 +104,9 @@ def main_trg(params, train_order, val_order, test_order, vocab=None):
     Main preprocessing
     """
     max_length = params.max_length
-    train_trg = '%s/train.%s' % (params.data_dir, params.trg)
-    val_trg = '%s/valid.%s' % (params.data_dir, params.trg)
-    test_trg = '%s/test.%s' % (params.data_dir, params.trg)
+    train_trg = 'data/%s/train.%s' % (params.data_dir, params.trg)
+    val_trg = 'data/%s/valid.%s' % (params.data_dir, params.trg)
+    test_trg = 'data/%s/test.%s' % (params.data_dir, params.trg)
     with open(train_trg, 'r') as f:
         sentences = f.readlines()
         sentences = [sent.strip().split()[:max_length] for sent in sentences]
@@ -120,8 +115,8 @@ def main_trg(params, train_order, val_order, test_order, vocab=None):
     print("Read %d lines from %s" % (len(sentences), train_trg))
 
     if vocab is None:
-        vocab_file = "%s/vocab.%s" % (params.data_dir, params.trg)
-        if osp.exists(vocab_file):
+        vocab_file = "data/%s/vocab.%s" % (params.data_dir, params.trg)
+        if os.path.exists(vocab_file):
             print('...Reading vocabulary file (%s)' % vocab_file)
             vocab = []
             for line in open(vocab_file, 'r'):
@@ -169,7 +164,7 @@ def main_trg(params, train_order, val_order, test_order, vocab=None):
     IL_test, Mask_test, Lengths_test = encode_sentences(sentences, params, wtoi)
 
     # create output h5 file
-    f = h5py.File('%s/%s.h5' % (params.data_dir, params.trg), "w")
+    f = h5py.File('data/%s/%s.h5' % (params.data_dir, params.trg), "w")
     f.create_dataset("labels_train", dtype='uint32', data=IL_train)
     f.create_dataset("lengths_train", dtype='uint32', data=Lengths_train)
 
@@ -181,7 +176,7 @@ def main_trg(params, train_order, val_order, test_order, vocab=None):
 
     print('Wrote h5file for the target langauge')
     pdump({'itow': itow, 'params': params},
-          '%s/%s.infos' % (params.data_dir, params.trg))
+          'data/%s/%s.infos' % (params.data_dir, params.trg))
 
 
 def main_src(params):
@@ -190,9 +185,9 @@ def main_src(params):
     """
     max_length = params.max_length
     batch_size = params.batch_size # 32
-    train_src = '%s/train.%s' % (params.data_dir, params.src)
-    val_src = '%s/valid.%s' % (params.data_dir, params.src)
-    test_src = '%s/test.%s' % (params.data_dir, params.src)
+    train_src = 'data/%s/train.%s' % (params.data_dir, params.src)
+    val_src = 'data/%s/valid.%s' % (params.data_dir, params.src)
+    test_src = 'data/%s/test.%s' % (params.data_dir, params.src)
     with open(train_src, 'r') as f:
         sentences = f.readlines()
         sentences = [sent.strip().split()[:max_length] for sent in sentences]
@@ -218,8 +213,8 @@ def main_src(params):
     else:
         train_order = None
     
-    vocab_file = "%s/vocab.%s" % (params.data_dir, params.src)
-    if osp.exists(vocab_file):
+    vocab_file = "data/%s/vocab.%s" % (params.data_dir, params.src)
+    if os.path.exists(vocab_file):
         print('...Reading vocabulary file (%s)' % vocab_file)
         vocab = []
         for line in open(vocab_file, 'r'):
@@ -284,7 +279,7 @@ def main_src(params):
     IL_test_src, _, Lengths_test = encode_sentences(sentences, params, wtoi)
 
     # HDF5 encoding
-    f = h5py.File('%s/%s.h5' % (params.data_dir, params.src), "w")
+    f = h5py.File('data/%s/%s.h5' % (params.data_dir, params.src), "w")
     f.create_dataset("labels_train", dtype='uint32', data=IL_train_src)
     f.create_dataset("lengths_train", dtype='uint32', data=Lengths_train)
     f.create_dataset("labels_val", dtype='uint32', data=IL_val_src)
@@ -294,19 +289,21 @@ def main_src(params):
 
     print('Wrote h5 file for the source langauge')
     pdump({'itow': itow, 'params': params},
-          '%s/%s.infos' % (params.data_dir, params.src))
+          'data/%s/%s.infos' % (params.data_dir, params.src))
     return train_order, val_order, test_order, vocab
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument('-d', '--data_dir', type=str, default='WMT14')
+    parser.add_argument('-d', '--data_dir', type=str, default='wmt_fr_en')
     parser.add_argument('--src', type=str, default='en')
     parser.add_argument('--trg', type=str, default='fr')
-    parser.add_argument('--max_words_src', default=30000, type=int,
-                        help="Max words in the source vocabulary")
-    parser.add_argument('--max_words_trg', default=30000, type=int,
-                        help="Max words in the target vocabulary")
+    parser.add_argument('--max_words_src', default=16384, type=int,
+                        help="Max words in the source vocabulary "
+                        "(default: 16384)")
+    parser.add_argument('--max_words_trg', default=16384, type=int,
+                        help="Max words in the target vocabulary "
+                        "(default: 16384)")
     parser.add_argument('--max_length', default=50, type=int,
                         help='max length of a sentence')
     parser.add_argument('-b', '--batch_size', default=32, type=int,
@@ -320,46 +317,28 @@ if __name__ == "__main__":
     parser.add_argument('--shuffle_sort_eval', action='store_true',
                         help='sort the training set by source sequence length')
     params = parser.parse_args()
-    # Default settings for IWSLT DE-EN & WMT EN-DE:
-    if params.data_dir == 'iwslt':
-        params.src = "de"
+    # Default settings.
+    if params.data_dir == 'wmt_fr_en':
+        params.src = "fr"
         params.trg = "en"
-        params.max_words_src = 14000
-        params.max_words_trg = 14000
-        params.shuffle_sort = True
-        params.shuffle_sort_eval = True
-        params.max_length = 200
-        params.batch_size = 32
-
-    if params.data_dir == 'envi':
-        params.src = "en"
-        params.trg = "vi"
-        params.max_words_src = 10000
-        params.max_words_trg = 10000
-        params.shuffle_sort = True
-        params.shuffle_sort_eval = True
-        params.max_length = 200
-        params.batch_size = 32
-
-    if params.data_dir == 'envi_word':
-        params.src = "en"
-        params.trg = "vi"
-        params.max_words_src = 17700
-        params.max_words_trg = 17000
-        params.shuffle_sort = True
-        params.shuffle_sort_eval = True
-        params.max_length = 120
-        params.batch_size = 32
-
-    if params.data_dir == 'wmt_en_de':
-        params.src = "en"
-        params.trg = "de"
-        params.max_words_src = 32800
-        params.max_words_trg = 32800
+        params.max_words_src = 16384
+        params.max_words_trg = 16384
         params.shuffle_sort = True
         params.shuffle_sort_eval = True
         params.max_length = 200
         params.batch_size = 64
+    if params.data_dir == 'wmt_en_fr':
+        params.src = "en"
+        params.trg = "fr"
+        params.max_words_src = 16384
+        params.max_words_trg = 16384
+        params.shuffle_sort = True
+        params.shuffle_sort_eval = True
+        params.max_length = 200
+        params.batch_size = 64
+
+    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    os.chdir(project_dir)
 
     print('Source language: ', params.src)
     train_order, val_order, test_order, vocab = main_src(params)
