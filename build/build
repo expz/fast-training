@@ -1,5 +1,8 @@
 #!/bin/bash
 
+# Stop on error.
+set -e
+
 script_dir="$(dirname "$(readlink -f "$BASH_SOURCE")")"
 
 . "$script_dir/util.sh"

@@ -194,6 +194,10 @@ for L in $src $tgt; do
   cp $tmp/bpe.test.$L $data_dir/test.$L
 done
 
+if prompt "Transform data into HDF5 files (y/n)? " ; then
+  "$project_dir/build/preprocess.py" -d "$data_dir/wmt_fr_en/" --src "$src" --trg "$tgt" --max_length 200
+fi
+
 if prompt "Delete temp files (y/n)? " ; then
   rm -r $tmp
 fi

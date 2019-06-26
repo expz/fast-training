@@ -1,4 +1,4 @@
-var translate = document.getElementById('translate');
+var translationForm = document.getElementById('translationForm');
 
 var xmlhttp = null;
 
@@ -13,25 +13,37 @@ function request(data, handler) {
   xmlhttp.send(JSON.stringify(data));
 }
 
-function translate_handler(e) {
-  e.preventDefault();
+function translate() {
   var data = {
-    'fr': document.getElementById('french').value
+    'fr': document.getElementById('french').value.trim()
   };
-  request(data, print_translation);
+  request(data, printTranslation);
 }
 
-function print_translation() {
+function translateHandler(e) {
+  e.preventDefault();
+  translate();
+}
+
+function keypressHandler(e) {
+  if (e.which == 13) {
+    e.preventDefault();
+    translate();
+  }
+}
+
+function printTranslation() {
   if (xmlhttp.readyState == XMLHttpRequest.DONE) {   // XMLHttpRequest.DONE == 4
-   if (xmlhttp.status == 200) {
-     var resp = JSON.parse(xmlhttp.responseText);
-     document.getElementById('english').textContent = resp.en;
-   } else {
-     alert('There was an error ' + xmlhttp.status);
-   }
+    if (xmlhttp.status == 200) {
+      var resp = JSON.parse(xmlhttp.responseText);
+      document.getElementById('english').textContent = resp.en;
+    } else {
+      alert('There was an error ' + xmlhttp.status);
+    }
   }
 }
 
 window.onload = function() {
-    translationForm.addEventListener('submit', translate_handler);
+  translationForm.addEventListener('submit', translateHandler);
+  document.getElementById('french').addEventListener('keypress', keypressHandler);
 };
