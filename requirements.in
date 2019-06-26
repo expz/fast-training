@@ -5,8 +5,4 @@ gunicorn
 h5py
 numpy
 PyYAML
-streamlit
-subword-nmt
-tensorboard
-tensorboardX
 torch

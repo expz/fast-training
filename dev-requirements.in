@@ -1,3 +1,7 @@
 pip-tools
 pytest
+streamlit
+subword-nmt
+tensorboard
+tensorboardX
 yapf
