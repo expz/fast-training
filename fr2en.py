@@ -8,6 +8,7 @@ import multiprocessing
 import os
 import streamlit
 import torch
+from torch.nn.parallel import DistributedDataParallel
 import yaml
 
 from train import build_learner, build_learner_without_data, train_worker
@@ -38,11 +39,12 @@ class PervasiveApp(object):
 
     def _parse_args(self,
                     config,
-                    gpu_ids=[],
+                    device_ids=None,
                     lr=None,
                     batch_size=None,
                     epochs=None,
-                    epoch_size=None):
+                    epoch_size=None,
+                    freeze=None):
         """
         Parse the config file `config` and `gpu_ids` for various commands.
         """
@@ -53,11 +55,15 @@ class PervasiveApp(object):
             with open(default_config, 'r') as f:
                 load_defaults(params, yaml.load(f, Loader=yaml.SafeLoader))
 
-        if gpu_ids is not None:
-            params['gpu_ids'] = gpu_ids
-            if not isinstance(gpu_ids, list):
-                gpu_ids = [gpu_ids]
-            gpu_ids = list(map(lambda s: int(s), gpu_ids))
+        if device_ids is not None:
+            if not isinstance(device_ids, list):
+                device_ids = [device_ids]
+            if 'cpu' in device_ids:
+                params['cpu'] = True
+                params['gpu_ids'] = None
+            else:
+                params['cpu'] = False
+                params['gpu_ids'] = list(map(lambda s: int(s), device_ids))
         if 'optim' not in params:
             params['optim'] = {}
         if lr is not None:
@@ -68,12 +74,16 @@ class PervasiveApp(object):
             params['data']['batch_size'] = int(batch_size)
         if epoch_size is not None:
             params['data']['epoch_size'] = int(epoch_size)
+        # Set default values for these parameters.
         if 'max_val_size' not in params['data']:
             params['data']['max_val_size'] = None
         if 'max_test_size' not in params['data']:
             params['data']['max_test_size'] = None
         if 'loader' not in params['data']:
             params['data']['loader'] = 'standard'
+        if freeze is not None or 'freeze' not in params:
+            freeze = freeze if freeze is not None else False
+            params['freeze'] = freeze
 
         project_dir = os.path.dirname(os.path.abspath(__file__))
         if 'model_name' not in params:
@@ -99,21 +109,19 @@ class PervasiveApp(object):
 
     def train(self,
               config,
-              gpu_ids=None,
+              device_ids=None,
               lr=None,
               checkpoint=None,
               restore=None,
               batch=None,
               epochs=None,
-              epoch_size=None):
+              epoch_size=None,
+              freeze=False):
         """
-        Train the model described in file `config` on GPUs `gpu_ids`.
+        Train the model described in file `config` on devices `device_ids`.
         """
-        params, project_dir = self._parse_args(config, gpu_ids, lr, batch,
-                                               epochs, epoch_size)
-        if 'gpu_ids' not in params:
-            # Training requires a GPU.
-            raise ValueError('Expected parameter "gpu_ids" not supplied.')
+        params, project_dir = self._parse_args(config, device_ids, lr, batch,
+                                               epochs, epoch_size, freeze)
 
         # Prepare a place for the shared process communication file.
         model_name = params['model_name']
@@ -129,11 +137,12 @@ class PervasiveApp(object):
         os.environ['MASTER_PORT'] = '3892'
         os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4,5,6,7'
         m = multiprocessing.Manager()
-        qs = [m.Queue() for _ in range(len(params['gpu_ids']))]
+        nprocs = max(1, len(params['gpu_ids']))
+        qs = [m.Queue() for _ in range(nprocs)]
         torch.multiprocessing.spawn(train_worker,
                                     args=(project_dir, params, comm_file,
                                           checkpoint, restore, qs),
-                                    nprocs=len(params['gpu_ids']),
+                                    nprocs=nprocs,
                                     join=True)
 
     def example(self, config, gpu_id=0, restore=None, batch=None):

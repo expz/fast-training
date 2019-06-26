@@ -191,7 +191,6 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
             max_val_size=params['data']['max_val_size'],
             max_test_size=params['data']['max_test_size'],
             distributed=distributed)
-
     # Define neural network.
     check_params(params, [
         'decoder.embedding_dim',
@@ -217,7 +216,6 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
         params['decoder']['prediction_dropout'],
         params['network']['division_factor'], params['network']['growth_rate'],
         params['network']['bias'], params['network']['efficient'])
-
     model.init_weights()
     if device_id is not None:
         if not torch.cuda.is_available():
@@ -279,7 +277,6 @@ def train_worker(pindex,
                 epoch = int(fields[1]) + 1
             except:
                 pass
-
     # Callbacks.
     logs_path = learn.path / 'logs'
     ts = datetime.now().strftime('%Y%m%dT%H%M%S')
@@ -292,6 +289,15 @@ def train_worker(pindex,
         tbwriter,
     ]
     learn.metrics.append(BLEUScoreMetric(learn, 5, queues, pindex))
+
+    if params['freeze']:
+        if isinstance(learn.model, DistributedDataParallel):
+            model = learn.model.module
+        model = learn.model
+        learn.split([model.linear, model.prediction_dropout])
+        # Untie target language embedding weights from input layer.
+        model.prediction.weight = torch.nn.Parameter(prediction.weight.clone())
+        learn.freeze_to(1)
 
     # Train with a one cycle schedule for each epoch.
     check_params(params, [
