@@ -23,19 +23,19 @@ The model code used the Pervasive Attention repo (https://github.com/elbayadm/at
 
 1. Clone repository.
 ```
-git clone https://github.com/expz/mt-fast-training
+git clone https://github.com/expz/fast-training
 ```
 
 2. Create Python environment. __NOTE:__ Moving this directory after creating the Python environment will break the environment and require deleting and redoing the setup.
 ```
-cd mt-fast-training
+cd fast-training
 deactivate 2>/dev/null
-virtualenv --python=$(which python3) mt-fast-training
+virtualenv --python=$(which python3) fast-training
 ```
 
 3. Install Python packages.
 ```
-source mt-fast-training/bin/activate
+source fast-training/bin/activate
 source .env
 pip install -r requirements.txt
 ```
@@ -44,7 +44,7 @@ pip install -r requirements.txt
 
 1. Activate Python environment. From the root directory of this repository, run
 ```
-source mt-fast-training/bin/activate
+source fast-training/bin/activate
 source .env
 ```
 
@@ -77,36 +77,35 @@ If you have a GPU installed on your system, then you can do training.
 
 Run the following commands from the root directory of the repository.
 
-1. Download and prepare the dataset. This requires over a GB of disk space.
+1. Install development requirements.
 ```
-yes | ./build/prepare-wmt14 --small
+pip install -r dev-requirements.txt
+```
+
+2. Download and prepare the dataset. This requires over a GB of disk space.
+```
+./build/prepare-wmt14 --small
 ```
 To prepare the full dataset, omit the `--small`. Preparation for the full dataset can take 15GB of disk space and 10-15 minutes on a fast computer. 
 
-2. Activate the virtual environment if it is not already activated.
+3. Activate the virtual environment if it is not already activated.
 ```
-source mt-fast-training/bin/activate
+source fast-training/bin/activate
 source .env
 ```
 
-3. (Optional) View the model architecture.
+4. (Optional) View the model architecture.
 ```
-python fr2en.py summary config/densenet-l12.yaml
+python fr2en.py summary config/densenet-12.yaml
 ```
 
-4. (Optional) Search for a good learning rate.
+5. Train a model. For example, choose the 12 layer Densenet (`config/densenet-12.yaml`). This can take a long time.
 ```
-streamlit run fr2en.py find_lr config/densenet-l12.yaml
-```
-Then go in the browser to http://localhost:8501 where a plot of the learning rate performance will appear. Choose the learning rate where the graph has the steepest decline. Then back in the console, press CTRL-C to exit.
-
-5. Train a model. For example, choose the 12 layer Densenet (`config/densenet-l12.yaml`). This can take a long time.
-```
-python fr2en.py train --lr 0.0015 config/densenet-l12.yaml
+python fr2en.py train --lr 0.0015 config/densenet-12.yaml
 ```
 To do distributed training on nVidia GPUs `0` and `1`, run
 ```
-python fr2en.py train --gpu_ids '[0,1]' config/densenet-l12.yaml
+python fr2en.py train --gpu_ids '[0,1]' config/densenet-12.yaml
 ```
 Press CTRL-C to stop training in the middle.
 
@@ -114,7 +113,7 @@ Press CTRL-C to stop training in the middle.
 
 First install development requirements. From the root directory of the repository, run
 ```
-source mt-fast-training/bin/activate
+source fast-training/bin/activate
 pip install -r dev-requirements.txt
 ```
 
@@ -122,7 +121,7 @@ pip install -r dev-requirements.txt
 
 From the root directory of the repository, run
 ```
-source mt-fast-training/bin/activate
+source fast-training/bin/activate
 source .env
 pytest
 ```
