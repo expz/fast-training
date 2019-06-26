@@ -23,9 +23,9 @@ def beam_search(learn, src_data, beam_size, max_length):
     model = learn.model
     if isinstance(model, DistributedDataParallel):
         model = model.module
-    offsets = torch.tensor(
-        range(0, batch_size * beam_size * beam_size, beam_size * beam_size),
-        dtype=torch.int64).to(src_data.device)
+    offsets = torch.tensor(range(0, batch_size * beam_size * beam_size,
+                                 beam_size * beam_size),
+                           dtype=torch.int64).to(src_data.device)
     offsets = offsets.unsqueeze(1).repeat(1, beam_size)
 
     # Peform initial evaluation.
@@ -36,7 +36,7 @@ def beam_search(learn, src_data, beam_size, max_length):
     # Select `beam_size` most probable first tokens.
     top_k_total_logits, top_k_idx = torch.topk(logits, beam_size, dim=1)
     tgt_data = top_k_idx.unsqueeze(2)
-    assert(list(tgt_data.shape) == [batch_size, beam_size, 1])
+    assert (list(tgt_data.shape) == [batch_size, beam_size, 1])
 
     with torch.no_grad():
         for j in range(1, max_length):
@@ -47,23 +47,23 @@ def beam_search(learn, src_data, beam_size, max_length):
 
             # Predict next tokens by estimating their log probabilities.
             logits = torch.cat([
-                    model.eval()._predict(src_data, tgt_batch).unsqueeze(1)
-                    for tgt_batch in tgt_dataset],
-                dim=1)
-            assert(list(logits.shape) == [batch_size, beam_size, vocab_size])
+                model.eval()._predict(src_data, tgt_batch).unsqueeze(1)
+                for tgt_batch in tgt_dataset
+            ],
+                               dim=1)
+            assert (list(logits.shape) == [batch_size, beam_size, vocab_size])
 
             # Select `beam_size` most probable next tokens for each example.
             values, indices = torch.topk(logits, beam_size, dim=2)
 
             # Accumulate total log probability of the entire sequences.
-            total_logits = (
-                values + top_k_total_logits.unsqueeze(2).repeat(1, 1, beam_size)
-            ).view(batch_size, beam_size * beam_size)
+            total_logits = (values + top_k_total_logits.unsqueeze(2).repeat(
+                1, 1, beam_size)).view(batch_size, beam_size * beam_size)
 
             # Select `beam_size` seqs out of `beam_size * beam_size` total.
             top_k_total_logits, top_k_indices_of_indices = \
                 torch.topk(total_logits, beam_size, dim=1)
-            assert(list(top_k_total_logits.shape) == [batch_size, beam_size])
+            assert (list(top_k_total_logits.shape) == [batch_size, beam_size])
 
             # `torch.take()` requires a 1D list of indices indexing into a 2D
             # tensor, so we must add offsets to each row of indices.
@@ -77,14 +77,15 @@ def beam_search(learn, src_data, beam_size, max_length):
             old_in_data = torch.cat([
                 t.squeeze(0).index_select(
                     dim=0,
-                    index=indices_of_indices[i] // beam_size - i * beam_size
-                ).unsqueeze(0)
+                    index=indices_of_indices[i] // beam_size -
+                    i * beam_size).unsqueeze(0)
                 for i, t in enumerate(tgt_data.split([1] * batch_size))
-            ], dim=0)
+            ],
+                                    dim=0)
 
             # Concatenate the new tokens to the end of the existing output seqs.
             tgt_data = torch.cat((old_in_data, top_k_indices.unsqueeze(2)), 2)
-            assert(list(tgt_data.shape) == [batch_size, beam_size, j+1])
+            assert (list(tgt_data.shape) == [batch_size, beam_size, j + 1])
 
     return tgt_data[:, 0, :]
 
@@ -107,9 +108,8 @@ def moses_bleu_score(hypotheses, references, lowercase=False):
     project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     src_dir = os.path.join(project_dir, 'data', 'mosesdecoder')
     bleu_path = os.path.join(src_dir, 'scripts', 'generic', 'multi-bleu.perl')
-    moses_url = (
-        "https://raw.githubusercontent.com/moses-smt/mosesdecoder/"
-        "master/scripts/generic/multi-bleu.perl")
+    moses_url = ("https://raw.githubusercontent.com/moses-smt/mosesdecoder/"
+                 "master/scripts/generic/multi-bleu.perl")
     try:
         if not os.path.isfile(bleu_path):
             os.makedirs(os.path.dirname(bleu_path), exist_ok=True)
@@ -117,8 +117,7 @@ def moses_bleu_score(hypotheses, references, lowercase=False):
             os.chmod(bleu_path, 0o755)
     except:
         print("Unable to fetch multi-bleu.perl script")
-        print(
-            traceback.format_exception_only(sys.last_type, sys.last_value))
+        print(traceback.format_exception_only(sys.last_type, sys.last_value))
         return None
 
     # Dump hypotheses and references to tempfiles
@@ -138,7 +137,9 @@ def moses_bleu_score(hypotheses, references, lowercase=False):
             bleu_cmd += ["-lc"]
         bleu_cmd += [reference_file.name]
         try:
-            bleu_out = subprocess.check_output(bleu_cmd, stdin=read_pred, stderr=subprocess.STDOUT)
+            bleu_out = subprocess.check_output(bleu_cmd,
+                                               stdin=read_pred,
+                                               stderr=subprocess.STDOUT)
             bleu_out = bleu_out.decode("utf-8")
             bleu_score = re.search(r"BLEU = (.+?),", bleu_out).group(1)
             bleu_score = float(bleu_score)

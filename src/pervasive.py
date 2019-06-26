@@ -13,7 +13,6 @@ from torch import nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as cp
 
-
 # Cache most recent function result using @cache decorator.
 cache = functools.lru_cache(1)
 
@@ -375,9 +374,8 @@ class Pervasive(nn.Module):
         This functions allows us to define a column of BOS tokens
         once for all using caching.
         """
-        return torch.tensor(
-                [[self.tgt_vocab.bos]], dtype=torch.int64
-            ).repeat(batch_size, 1).to(torch.device(device_id))
+        return torch.tensor([[self.tgt_vocab.bos]], dtype=torch.int64).repeat(
+            batch_size, 1).to(torch.device(device_id))
 
     def predict(self, data):
         """

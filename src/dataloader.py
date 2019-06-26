@@ -114,14 +114,14 @@ class VocabData(object):
         the dimensions of t without the last dimension, i.e. `t.shape[:-1]`.
         """
         if len(t.shape) > 1:
-            return list(map(lambda ti: self.to_text(ti.squeeze(0)),
-                            t.split(1, dim=0)))
+            return list(
+                map(lambda ti: self.to_text(ti.squeeze(0)), t.split(1, dim=0)))
         words = [
             self.ix_to_word[t[i].item()]
             for i in range(t.shape[0])
-            if (bos or t[i].item() != self.bos)
-              and (eos or t[i].item() != self.eos)
-              and (pad or t[i].item() != self.pad)
+            if (bos or t[i].item() != self.bos) and
+            (eos or t[i].item() != self.eos) and
+            (pad or t[i].item() != self.pad)
         ]
         s = ' '.join(words)
         for x, y in self.replacements:
@@ -147,6 +147,7 @@ class VocabData(object):
         ids = ids + [self.pad] * (max_length - len(ids))
         return ids[:max_length]
 
+
 def _prepare_ds(h5fn, dsname, vocab, max_length):
     """
     This loads datasets from HDF5 file `h5fn` and adds beginning of
@@ -157,10 +158,13 @@ def _prepare_ds(h5fn, dsname, vocab, max_length):
     """
     h5ds = H5Dataset(h5fn, f'labels_{dsname}')
     lens = H5Dataset(h5fn, f'lengths_{dsname}')
-    bos = torch.tensor([[vocab.bos]], dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
-    pad = torch.tensor([[vocab.pad]], dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
+    bos = torch.tensor([[vocab.bos]],
+                       dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
+    pad = torch.tensor([[vocab.pad]],
+                       dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
     ds = torch.cat((bos, h5ds.data[:, :max_length], pad), 1)
-    indices = (torch.tensor(range(ds.shape[0])), 1 + lens.data.clamp(0, max_length))
+    indices = (torch.tensor(range(ds.shape[0])),
+               1 + lens.data.clamp(0, max_length))
     ds.index_put_(indices, torch.tensor([vocab.eos], dtype=torch.int64))
     return ds[:, :-1], lens
 
@@ -177,8 +181,10 @@ def _prepare_progressive_ds(h5fn, dsname, vocab, max_length):
     """
     h5ds = H5Dataset(h5fn, f'labels_{dsname}')
     h5lens = H5Dataset(h5fn, f'lengths_{dsname}')
-    bos = torch.tensor([[vocab.bos]], dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
-    pad = torch.tensor([[vocab.pad]], dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
+    bos = torch.tensor([[vocab.bos]],
+                       dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
+    pad = torch.tensor([[vocab.pad]],
+                       dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
     ds1 = torch.cat((bos, h5ds.data[:, 0:max_length:2], pad), 1)
     ds2 = torch.cat((bos, h5ds.data[:, 1:max_length:2], pad), 1)
     lens1 = (h5lens.data.clamp(0, max_length) + 1) // 2
@@ -234,10 +240,13 @@ class PervasiveDataLoader(object):
         self.datasets = {}
         self.loaders = {}
         for dsname in ['train', 'val', 'test']:
-            src, self.src_lens = prepare_ds(src_h5, dsname, self.src_vocab, self.max_length)
-            tgt, self.tgt_lens = prepare_ds(tgt_h5, dsname, self.tgt_vocab, self.max_length)
+            src, self.src_lens = prepare_ds(src_h5, dsname, self.src_vocab,
+                                            self.max_length)
+            tgt, self.tgt_lens = prepare_ds(tgt_h5, dsname, self.tgt_vocab,
+                                            self.max_length)
             srctgt = torch.cat((src, tgt), 1)
-            tgt2 = tgt[:, 1:].clone()  # Do not include BOS tokens in target output.
+            tgt2 = tgt[:, 1:].clone(
+            )  # Do not include BOS tokens in target output.
             # Shrink datasets if they are too large.
             if dsname == 'train':
                 epoch_sz = epoch_size
@@ -269,13 +278,12 @@ class PervasiveDataLoader(object):
                                             num_samples=epoch_sz)
                 else:
                     sampler = None
-            self.loaders[dsname] = DataLoader(
-                self.datasets[dsname],
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=1,
-                pin_memory=True,
-                sampler=sampler)
+            self.loaders[dsname] = DataLoader(self.datasets[dsname],
+                                              batch_size=self.batch_size,
+                                              shuffle=False,
+                                              num_workers=1,
+                                              pin_memory=True,
+                                              sampler=sampler)
 
 
 class ProgressivePervasiveDataLoader(PervasiveDataLoader):
@@ -297,7 +305,9 @@ class ProgressivePervasiveDataLoader(PervasiveDataLoader):
                  max_test_size=None,
                  distributed=False):
 
-        super().__init__(src_infos, src_h5, tgt_infos, tgt_h5, batch_size, max_length, model_name, epoch_size, max_val_size, max_test_size, distributed, _prepare_progressive_ds)
+        super().__init__(src_infos, src_h5, tgt_infos, tgt_h5, batch_size,
+                         max_length, model_name, epoch_size, max_val_size,
+                         max_test_size, distributed, _prepare_progressive_ds)
 
         self.max_length = self.max_length // 2
 
@@ -317,8 +327,9 @@ class H5Dataset(torch.utils.data.Dataset):
         self.dsname = dsname
         with h5py.File(self.h5_filename, 'r', libver='latest',
                        swmr=True) as h5_file:
-            self.data = torch.as_tensor(
-                np.array(h5_file[dsname]).astype(np.int64), dtype=torch.long)
+            self.data = torch.as_tensor(np.array(h5_file[dsname]).astype(
+                np.int64),
+                                        dtype=torch.long)
 
     def __getitem__(self, index):
         """

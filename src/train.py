@@ -18,12 +18,10 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader
 
 from bleu import bleu_score
-from dataloader import (
-    PervasiveDataLoader, ProgressivePervasiveDataLoader, VocabData
-)
+from dataloader import (PervasiveDataLoader, ProgressivePervasiveDataLoader,
+                        VocabData)
 from evaluate import beam_search
 from pervasive import Pervasive
-
 
 src_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -85,10 +83,9 @@ def build_learner_without_data(params, project_dir):
     ])
     # Max length is 1 more than setting to account for BOS.
     model = Pervasive(
-        model_name, src_vocab, tgt_vocab,
-        params['network']['block_sizes'], params['data']['max_length'] + 1,
-        params['data']['max_length'] + 1, params['encoder']['embedding_dim'],
-        params['decoder']['embedding_dim'],
+        model_name, src_vocab, tgt_vocab, params['network']['block_sizes'],
+        params['data']['max_length'] + 1, params['data']['max_length'] + 1,
+        params['encoder']['embedding_dim'], params['decoder']['embedding_dim'],
         params['encoder']['embedding_dropout'], params['network']['dropout'],
         params['decoder']['embedding_dropout'],
         params['decoder']['prediction_dropout'],
@@ -110,6 +107,7 @@ def build_learner_without_data(params, project_dir):
                      device=device)
     learn = Learner(data, model, loss_func=F.cross_entropy, model_dir=model_dir)
     return learn, src_vocab, tgt_vocab
+
 
 def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
     """
@@ -319,10 +317,13 @@ class CSVLogger(LearnerCallback):
     https://github.com/fastai/fastai/blob/master/fastai/callbacks/csv_logger.py
     """
 
-    def __init__(self, learn:Learner, filename: str = 'history', append: bool = False):
+    def __init__(self,
+                 learn: Learner,
+                 filename: str = 'history',
+                 append: bool = False):
         super().__init__(learn)
         self.filename, self.append = filename, append
-        self.path = self.learn.path/f'{filename}.csv'
+        self.path = self.learn.path / f'{filename}.csv'
         self.add_time = True
 
     def read_logged_file(self):
@@ -350,9 +351,8 @@ class CSVLogger(LearnerCallback):
         metrics = zip(self.learn.recorder.names,
                       [epoch, smooth_loss] + last_metrics)
         stats = [
-            str(stat) if isinstance(stat, int) else '#na#'
-            if stat is None else f'{stat:.6f}'
-            for name, stat in metrics
+            str(stat) if isinstance(stat, int) else
+            '#na#' if stat is None else f'{stat:.6f}' for name, stat in metrics
         ]
         if self.add_time:
             stats.append(format_time(time.time() - self.start_epoch))
@@ -362,6 +362,7 @@ class CSVLogger(LearnerCallback):
 
 
 class BLEUScoreMetric(LearnerCallback):
+
     def __init__(self, learn, beam_size=5, queues=None, pindex=None):
         super().__init__(learn)
         self.name = 'bleu'
@@ -386,21 +387,21 @@ class BLEUScoreMetric(LearnerCallback):
         if not train:
             batch_size = last_input.size(0)
             src_data, tgt_data = last_input.split([self.Ts, self.Tt], dim=1)
-            out_data = beam_search(
-                self.learn, src_data, self.beam_size, self.Tt - 1)
-            assert(list(out_data.shape) == [batch_size, self.Tt - 1])
+            out_data = beam_search(self.learn, src_data, self.beam_size,
+                                   self.Tt - 1)
+            assert (list(out_data.shape) == [batch_size, self.Tt - 1])
             bleu = 0.0
             for b in range(batch_size):
                 out_l = []
                 for i in range(self.Tt - 1):
-                    if (out_data[b][i].item() == self.eos
-                            or out_data[b][i].item() == self.pad):
+                    if (out_data[b][i].item() == self.eos or
+                            out_data[b][i].item() == self.pad):
                         break
                     out_l.append(str(out_data[b][i].item()))
                 tgt_l = []
                 for i in range(1, self.Tt):
-                    if (tgt_data[b][i].item() == self.eos
-                            or tgt_data[b][i].item() == self.pad):
+                    if (tgt_data[b][i].item() == self.eos or
+                            tgt_data[b][i].item() == self.pad):
                         # The Moses BLEU score script gives 0 for sentences of
                         # length less than four, so ignore those BLEU score.
                         if i < 4:

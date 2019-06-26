@@ -94,7 +94,7 @@ class PervasiveApp(object):
                 print(f'Loaded model {filename}.')
             except FileNotFoundError:
                 print(f'The model file {learn.model_dir}/{filename}.pth '
-                          'was not found!')
+                      'was not found!')
                 return
 
     def train(self,
@@ -169,9 +169,9 @@ class PervasiveApp(object):
         learn, src_vocab, tgt_vocab = \
             build_learner_without_data(params, project_dir)
         self._restore(learn, restore)
-        src_data = torch.tensor(
-            [src_vocab.to_ints(src_text, params['data']['max_length'] + 1)]
-        ).to(torch.device(gpu_id))
+        src_data = torch.tensor([
+            src_vocab.to_ints(src_text, params['data']['max_length'] + 1)
+        ]).to(torch.device(gpu_id))
         out_data = beam_search(learn, src_data, 5, params['data']['max_length'])
         out_text = tgt_vocab.to_text(out_data)[0]
         print(out_text)
