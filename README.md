@@ -105,7 +105,7 @@ python fr2en.py train --lr 0.0015 config/densenet-12.yaml
 ```
 To do distributed training on nVidia GPUs `0` and `1`, run
 ```
-python fr2en.py train --gpu_ids '[0,1]' config/densenet-12.yaml
+python fr2en.py train --device_ids '[0,1]' config/densenet-12.yaml
 ```
 Press CTRL-C to stop training in the middle.
 
