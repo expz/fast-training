@@ -3,5 +3,5 @@ __pycache__/
 .pytest_cache/
 *.egg-info/
 *.egg
-mt-fast-training/
+fast-training/
 venv/

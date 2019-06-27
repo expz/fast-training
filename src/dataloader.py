@@ -59,6 +59,35 @@ class DistributedSubSampler(DistributedSampler):
 
 
 class VocabData(object):
+    replacements = [
+        ('@@ ', ''),
+        (' &apos; ', "'"),
+        ('&apos; ', "'"),
+        (' &apos;', "'"),
+        (' @-@ ', '-'),
+        (' .', '.'),
+        (' ,', ','),
+        (' ;', ';'),
+        (' ?', '?'),
+        (' !', '!'),
+        ('( ', '('),
+        (' )', ')'),
+        (' : ', ': '),
+        (' / ', '/'),
+    ]
+    enc_replacements = [
+        ("'", ' &apos; '),
+        ('-', ' @-@ '),
+        ('.', ' . '),
+        (',', ' , '),
+        (':', ' : '),
+        (';', ' ; '),
+        ('?', ' ? '),
+        ('!', ' ! '),
+        ('(', ' ( '),
+        (')', ' ) '),
+        ('/', ' / '),
+    ]
 
     def __init__(self, infos_fn):
         # Load index to word mapping from .infos file.
@@ -69,29 +98,93 @@ class VocabData(object):
         self.vocab_size = len(self.ix_to_word)
 
         # Word to index mapping and special tokens.
-        word_to_ix = {w: ix for ix, w in self.ix_to_word.items()}
-        self.pad = word_to_ix['<PAD>']
-        self.unk = word_to_ix['<UNK>']
-        self.eos = word_to_ix['<EOS>']
-        self.bos = word_to_ix['<BOS>']
+        self.word_to_ix = {w: ix for ix, w in self.ix_to_word.items()}
+        self.pad = self.word_to_ix['<PAD>']
+        self.unk = self.word_to_ix['<UNK>']
+        self.eos = self.word_to_ix['<EOS>']
+        self.bos = self.word_to_ix['<BOS>']
+
+    def __len__(self):
+        """Size of this vocabulary."""
+        return self.vocab_size
+
+    def to_text(self, t, bos=False, eos=False, pad=False):
+        """
+        Convert a tensor to an array of text of dimensions equal to
+        the dimensions of t without the last dimension, i.e. `t.shape[:-1]`.
+        """
+        if len(t.shape) > 1:
+            return list(
+                map(lambda ti: self.to_text(ti.squeeze(0)), t.split(1, dim=0)))
+        words = [
+            self.ix_to_word[t[i].item()]
+            for i in range(t.shape[0])
+            if (bos or t[i].item() != self.bos) and
+            (eos or t[i].item() != self.eos) and
+            (pad or t[i].item() != self.pad)
+        ]
+        s = ' '.join(words)
+        for x, y in self.replacements:
+            s = s.replace(x, y)
+        return s
+
+    def to_ints(self, texts, max_length):
+        """
+        Convert the sentences in `texts` to lists of integers indexing into
+        this vocabulary.
+
+        TODO: This should use BPE.
+        """
+        if isinstance(texts[0], list):
+            return [self.to_ints(t) for t in texts]
+        for x, y in self.enc_replacements:
+            texts = texts.replace(x, y)
+        ids = [
+            self.word_to_ix[word] if word in self.word_to_ix else self.unk
+            for word in texts.split()
+        ]
+        ids = [self.bos] + ids + [self.eos]
+        ids = ids + [self.pad] * (max_length - len(ids))
+        return ids[:max_length]
 
 
 def _prepare_ds(h5fn, dsname, vocab, max_length):
+    """
+    This loads datasets from HDF5 file `h5fn` and adds beginning of
+    sequence (BOS) and padding tokens.
+
+    It assumes the token indices are in a dataset called `labels_{dsname}`
+    and that the lengths of the sentences are in `lengths_{dsname}`.
+    """
     h5ds = H5Dataset(h5fn, f'labels_{dsname}')
     lens = H5Dataset(h5fn, f'lengths_{dsname}')
-    bos = torch.tensor([[vocab.bos]], dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
-    pad = torch.tensor([[vocab.pad]], dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
+    bos = torch.tensor([[vocab.bos]],
+                       dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
+    pad = torch.tensor([[vocab.pad]],
+                       dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
     ds = torch.cat((bos, h5ds.data[:, :max_length], pad), 1)
-    indices = (torch.tensor(range(ds.shape[0])), 1 + lens.data.clamp(0, max_length))
+    indices = (torch.tensor(range(ds.shape[0])),
+               1 + lens.data.clamp(0, max_length))
     ds.index_put_(indices, torch.tensor([vocab.eos], dtype=torch.int64))
     return ds[:, :-1], lens
 
 
 def _prepare_progressive_ds(h5fn, dsname, vocab, max_length):
+    """
+    This loads datasets from HDF5 file `h5fn`. It splits the examples into
+    two, one with tokens in even positions and one with tokens in odd positions,
+    and adds beginning of sequence (BOS) and padding tokens. The data can
+    then be used for trainin by progressive resizing.
+
+    It assumes the token indices are in a dataset called `labels_{dsname}`
+    and that the lengths of the sentences are in `lengths_{dsname}`.
+    """
     h5ds = H5Dataset(h5fn, f'labels_{dsname}')
     h5lens = H5Dataset(h5fn, f'lengths_{dsname}')
-    bos = torch.tensor([[vocab.bos]], dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
-    pad = torch.tensor([[vocab.pad]], dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
+    bos = torch.tensor([[vocab.bos]],
+                       dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
+    pad = torch.tensor([[vocab.pad]],
+                       dtype=torch.int64).repeat(h5ds.data.shape[0], 1)
     ds1 = torch.cat((bos, h5ds.data[:, 0:max_length:2], pad), 1)
     ds2 = torch.cat((bos, h5ds.data[:, 1:max_length:2], pad), 1)
     lens1 = (h5lens.data.clamp(0, max_length) + 1) // 2
@@ -147,40 +240,57 @@ class PervasiveDataLoader(object):
         self.datasets = {}
         self.loaders = {}
         for dsname in ['train', 'val', 'test']:
-            src, self.src_lens = prepare_ds(src_h5, dsname, self.src_vocab, self.max_length)
-            tgt, self.tgt_lens = prepare_ds(tgt_h5, dsname, self.tgt_vocab, self.max_length)
+            src, self.src_lens = prepare_ds(src_h5, dsname, self.src_vocab,
+                                            self.max_length)
+            tgt, self.tgt_lens = prepare_ds(tgt_h5, dsname, self.tgt_vocab,
+                                            self.max_length)
             srctgt = torch.cat((src, tgt), 1)
-            tgt2 = tgt[:, 1:].clone()  # Do not include BOS tokens in target output.
+            tgt2 = tgt[:, 1:].clone(
+            )  # Do not include BOS tokens in target output.
             # Shrink datasets if they are too large.
+            if dsname == 'train':
+                epoch_sz = epoch_size
             if dsname == 'val' and max_val_size:
+                epoch_sz = min(epoch_size, max_val_size)
                 srctgt = srctgt[:max_val_size]
                 tgt2 = tgt2[:max_val_size]
             elif dsname == 'test' and max_test_size:
+                epoch_sz = min(epoch_size, max_test_size)
                 srctgt = srctgt[:max_test_size]
                 tgt2 = tgt2[:max_test_size]
             self.datasets[dsname] = torch.utils.data.TensorDataset(srctgt, tgt2)
             # Hack to please fastai Learner.summary().
             self.datasets[dsname].is_empty = False
-            # Define dataloader with distributed sampler.
+            # Training set is currently sampled randomly for training
+            # and deterministically for validation and test.
             if distributed:
-                sampler = DistributedSubSampler(self.datasets[dsname],
-                                                epoch_size=epoch_size)
+                if dsname == 'train':
+                    sampler = DistributedSubSampler(self.datasets[dsname],
+                                                    epoch_size=epoch_sz)
+                else:
+                    sampler = DistributedSampler(self.datasets[dsname])
             else:
-                # TODO: Define a non-distributed sub-sampler
-                #       without replacement.
-                sampler = RandomSampler(self.datasets[dsname],
-                                        replacement=True,
-                                        num_samples=epoch_size)
-            self.loaders[dsname] = DataLoader(
-                self.datasets[dsname],
-                batch_size=self.batch_size,
-                shuffle=False,
-                num_workers=1,
-                pin_memory=True,
-                sampler=sampler)
+                if dsname == 'train':
+                    # TODO: Define a non-distributed sub-sampler
+                    #       without replacement.
+                    sampler = RandomSampler(self.datasets[dsname],
+                                            replacement=True,
+                                            num_samples=epoch_sz)
+                else:
+                    sampler = None
+            self.loaders[dsname] = DataLoader(self.datasets[dsname],
+                                              batch_size=self.batch_size,
+                                              shuffle=False,
+                                              num_workers=1,
+                                              pin_memory=True,
+                                              sampler=sampler)
 
 
 class ProgressivePervasiveDataLoader(PervasiveDataLoader):
+    """
+    This represents a data loader for a progressive resizing dataset.
+    See `PervasiveDataLoader` for more details.
+    """
 
     def __init__(self,
                  src_infos,
@@ -195,7 +305,9 @@ class ProgressivePervasiveDataLoader(PervasiveDataLoader):
                  max_test_size=None,
                  distributed=False):
 
-        super().__init__(src_infos, src_h5, tgt_infos, tgt_h5, batch_size, max_length, model_name, epoch_size, max_val_size, max_test_size, distributed, _prepare_progressive_ds)
+        super().__init__(src_infos, src_h5, tgt_infos, tgt_h5, batch_size,
+                         max_length, model_name, epoch_size, max_val_size,
+                         max_test_size, distributed, _prepare_progressive_ds)
 
         self.max_length = self.max_length // 2
 
@@ -215,8 +327,9 @@ class H5Dataset(torch.utils.data.Dataset):
         self.dsname = dsname
         with h5py.File(self.h5_filename, 'r', libver='latest',
                        swmr=True) as h5_file:
-            self.data = torch.as_tensor(
-                np.array(h5_file[dsname]).astype(np.int64), dtype=torch.long)
+            self.data = torch.as_tensor(np.array(h5_file[dsname]).astype(
+                np.int64),
+                                        dtype=torch.long)
 
     def __getitem__(self, index):
         """

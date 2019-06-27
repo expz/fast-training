@@ -10,8 +10,7 @@ network:
 
 data:
   batch_size: 32
-  epoch_size: 320000
-  loader: progressive
+  epoch_size: 32000
   max_val_size: 3200
   max_test_size: 3200
   max_length: 50
