@@ -73,39 +73,29 @@ Then build the docker container and push it to Google Cloud Run:
 
 ## Training the model
 
-If you have a GPU installed on your system, then you can do training.
+__WARNING__: Training takes substantial computing resources. Some datasets are large and require significant computing power to preprocess and significant RAM as working space (although preprocessing does not load all data in memory for embedding vector datasets). At least one NVIDIA GPU is also required.
 
 Run the following commands from the root directory of the repository.
 
-1. Install development requirements.
+1. Load the environment and install development requirements.
 ```
+source .env
 pip install -r dev-requirements.txt
 ```
 
-2. Download and prepare the dataset. This requires over a GB of disk space.
+2. Download and prepare a small dataset of a few hundred MB. For more data, a larger data source or multiple data sources can be used. Possible data sources are listed using `python run.py pepare-data list-datasets`.
 ```
-./build/prepare-wmt14 --small
-```
-To prepare the full dataset, omit the `--small`. Preparation for the full dataset can take 15GB of disk space and 10-15 minutes on a fast computer. 
-
-3. Activate the virtual environment if it is not already activated.
-```
-source fast-training/bin/activate
-source .env
+python run.py prepare-data bert fr bert_fr_en "['news2014']" 50 --shuffle True --valid-size 4096
 ```
 
-4. (Optional) View the model architecture.
+3. (Optional) View the model architecture.
 ```
-python fr2en.py summary config/densenet-12.yaml
+python run.py summary config/densenet-12.yaml
 ```
 
-5. Train a model. For example, choose the 12 layer Densenet (`config/densenet-12.yaml`). This can take a long time.
+4. Train a model. With the `bert_fr_en` dataset prepared, a 12 layer Densenet with BERT pretrained embeddings can be trained (`config/densenet-12.yaml`). This can take a long time.
 ```
-python fr2en.py train --lr 0.0015 config/densenet-12.yaml
-```
-To do distributed training on nVidia GPUs `0` and `1`, run
-```
-python fr2en.py train --device_ids '[0,1]' config/densenet-12.yaml
+python run.py train --lr 0.005 config/densenet-12.yaml
 ```
 Press CTRL-C to stop training in the middle.
 
@@ -113,7 +103,7 @@ Press CTRL-C to stop training in the middle.
 
 First install development requirements. From the root directory of the repository, run
 ```
-source fast-training/bin/activate
+source .env
 pip install -r dev-requirements.txt
 ```
 
@@ -121,7 +111,6 @@ pip install -r dev-requirements.txt
 
 From the root directory of the repository, run
 ```
-source fast-training/bin/activate
 source .env
 pytest
 ```

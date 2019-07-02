@@ -4,5 +4,6 @@ fire
 gunicorn
 h5py
 numpy
+pandas<0.24.0  # A bug in odo (called by blaze) requires old version.
 PyYAML
 torch

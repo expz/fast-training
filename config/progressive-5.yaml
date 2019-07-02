@@ -1,0 +1,28 @@
+model_name: progressive-5
+default_config : config/default.yaml
+
+network:
+  type: pervasive-embeddings
+  upsample_stride: 1
+  upsample_kernel: 1
+  block_sizes:
+    - 12
+
+data:
+  src: fr
+  tgt: en
+  dir: data/low_res_fr_en_2_2
+  window_size: 2
+  window_step: 2
+  batch_size: 256
+  epoch_size: 32768
+  loader: progressive
+  max_val_size: 1280
+  max_test_size: 1280
+  max_length: 50
+  vocab: vocab.txt
+
+optim: 
+  seed: 3
+  lr: 0.05
+  epochs: 20
