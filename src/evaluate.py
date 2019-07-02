@@ -30,7 +30,7 @@ def beam_search(learn, src_data, beam_size, max_length):
 
     # Peform initial evaluation.
     with torch.no_grad():
-        logits = model.eval()._predict(src_data)
+        logits = model.eval().predict(src_data)
         vocab_size = logits.shape[1]
 
     # Select `beam_size` most probable first tokens.
@@ -47,7 +47,7 @@ def beam_search(learn, src_data, beam_size, max_length):
 
             # Predict next tokens by estimating their log probabilities.
             logits = torch.cat([
-                model.eval()._predict(src_data, tgt_batch).unsqueeze(1)
+                model.eval().predict(src_data, tgt_batch).unsqueeze(1)
                 for tgt_batch in tgt_dataset
             ],
                                dim=1)
@@ -92,6 +92,11 @@ def beam_search(learn, src_data, beam_size, max_length):
 
 def moses_bleu_score(hypotheses, references, lowercase=False):
     """
+    Calculates the BLEU score of `hypotheses` with respect to `references`
+    using the Moses library scripts.
+
+    The bleu score script is downloaded as needed.
+
     Adapted from
     https://pytorchnlp.readthedocs.io/en/latest/
             _modules/torchnlp/metrics/bleu.html

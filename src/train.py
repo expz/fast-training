@@ -9,6 +9,8 @@ from fastai.callbacks import LearnerCallback, SaveModelCallback
 from fastai.callbacks.tensorboard import LearnerTensorboardWriter
 from fastai.train import validate, Learner
 from fastprogress.fastprogress import format_time
+import logging
+import math
 import os
 import pandas as pd
 import time
@@ -18,10 +20,12 @@ from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DataLoader
 
 from bleu import bleu_score
-from dataloader import (PervasiveDataLoader, ProgressivePervasiveDataLoader,
-                        VocabData)
+from dataloader import PervasiveDataLoader, VocabData
 from evaluate import beam_search
-from pervasive import Pervasive
+from pervasive import Pervasive, PervasiveBert, PervasiveEmbedding
+
+
+logger = logging.getLogger('fr2en')
 
 src_dir = os.path.dirname(os.path.abspath(__file__))
 
@@ -41,6 +45,11 @@ def check_params(params, param_list):
 
 
 def build_learner_without_data(params, project_dir):
+    """
+    This builds a learner without loading data so that it loads more quickly.
+
+    It is especially useful for doing predictions.
+    """
     model_name = params['model_name']
     model_dir = os.path.join(project_dir, 'model', model_name)
     try:
@@ -109,6 +118,14 @@ def build_learner_without_data(params, project_dir):
     return learn, src_vocab, tgt_vocab
 
 
+def scaled_mse_loss(y, y_hat):
+    """
+    MSE loss scaled so that it usually lies in 0.1 - 100 range. This cannot
+    be converted to a lambda, because it needs to be pickleable.
+    """
+    return 10000 * F.mse_loss(y, y_hat)
+
+
 def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
     """
     Builds a fastai `Learner` object containing the model and data specified by
@@ -116,6 +133,30 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
     `pindex` of `world_size` total GPUs. In case more than one GPU is being
     used, a file named `comm_file` is used to communicate between processes.
     """
+    # For user friendly error messages, check these parameters exist.
+    check_params(params, [
+        'data.batch_size',
+        'data.dir',
+        'data.epoch_size',
+        'data.max_length',
+        'data.max_test_size',
+        'data.max_val_size',
+        'data.src',
+        'data.tgt',
+        'data.vocab',
+        'decoder.embedding_dim',
+        'decoder.embedding_dropout',
+        'decoder.prediction_dropout',
+        'encoder.embedding_dim',
+        'encoder.embedding_dropout',
+        'network.bias',
+        'network.block_sizes',
+        'network.division_factor',
+        'network.dropout',
+        'network.efficient',
+        'network.growth_rate',
+    ])
+
     model_name = params['model_name']
     model_dir = os.path.join(project_dir, 'model', model_name)
     try:
@@ -145,77 +186,93 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
                                              rank=pindex,
                                              init_method=f'file://{comm_file}')
 
+    # Load vocabulary.
+    vocab_path = os.path.join(params['data']['dir'], params['data']['vocab'])
+    if os.path.isfile(vocab_path):
+        # When using BERT, the source and target share a single vocabulary.
+        src_vocab = VocabData(vocab_path)
+        tgt_vocab = src_vocab
+    else:
+        src_vocab = VocabData(f'{vocab_path}.{params["src_lang"]}')
+        tgt_vocab = VocabData(f'{vocab_path}.{params["src_lang"]}')
+
     # Load data.
-    check_params(params, [
-        'data.batch_size',
-        'data.dir',
-        'data.epoch_size',
-        'data.max_length',
-        'data.max_test_size',
-        'data.max_val_size',
-        'data.src',
-        'data.tgt',
-    ])
-    batch_size = params['data']['batch_size'] // world_size
-    data_dir = params['data']['dir']
     src_l = params['data']['src']
     tgt_l = params['data']['tgt']
-    src_infos = os.path.join(data_dir, f'{src_l}.infos')
-    tgt_infos = os.path.join(data_dir, f'{tgt_l}.infos')
-    src_h5 = os.path.join(data_dir, f'{src_l}.h5')
-    tgt_h5 = os.path.join(data_dir, f'{tgt_l}.h5')
-    if params['data']['loader'] == 'progressive':
-        loader = ProgressivePervasiveDataLoader(
-            src_infos,
-            src_h5,
-            tgt_infos,
-            tgt_h5,
-            batch_size,
-            params['data']['max_length'],
-            model_name,
-            epoch_size=params['data']['epoch_size'],
-            max_val_size=params['data']['max_val_size'],
-            max_test_size=params['data']['max_test_size'],
-            distributed=distributed)
-        params['data']['max_length'] = params['data']['max_length'] // 2
-    else:
-        loader = PervasiveDataLoader(
-            src_infos,
-            src_h5,
-            tgt_infos,
-            tgt_h5,
-            batch_size,
-            params['data']['max_length'],
-            model_name,
-            epoch_size=params['data']['epoch_size'],
-            max_val_size=params['data']['max_val_size'],
-            max_test_size=params['data']['max_test_size'],
-            distributed=distributed)
+    loader = PervasiveDataLoader(
+        os.path.join(params['data']['dir'], f'{src_l}.h5'),
+        os.path.join(params['data']['dir'], f'{tgt_l}.h5'),
+        src_vocab,
+        tgt_vocab,
+        params['data']['batch_size'] // world_size,
+        params['data']['max_length'],
+        epoch_size=params['data']['epoch_size'],
+        max_val_size=params['data']['max_val_size'],
+        distributed=distributed)
+
     # Define neural network.
-    check_params(params, [
-        'decoder.embedding_dim',
-        'decoder.embedding_dropout',
-        'decoder.prediction_dropout',
-        'encoder.embedding_dim',
-        'encoder.embedding_dropout',
-        'network.bias',
-        'network.block_sizes',
-        'network.division_factor',
-        'network.dropout',
-        'network.efficient',
-        'network.growth_rate',
-    ])
     # Max length is 1 more than setting to account for BOS.
-    model = Pervasive(
-        model_name, loader.src_vocab, loader.tgt_vocab,
-        params['network']['block_sizes'], params['data']['max_length'] + 1,
-        params['data']['max_length'] + 1, params['encoder']['embedding_dim'],
-        params['decoder']['embedding_dim'],
-        params['encoder']['embedding_dropout'], params['network']['dropout'],
-        params['decoder']['embedding_dropout'],
-        params['decoder']['prediction_dropout'],
-        params['network']['division_factor'], params['network']['growth_rate'],
-        params['network']['bias'], params['network']['efficient'])
+    if params['network']['type'] == 'pervasive-embeddings':
+        if (params['encoder']['embedding_dim']
+                != params['decoder']['embedding_dim']):
+            raise ValueError('Encoder and decoder must have the same embedding '
+                             'dimension to use pretrained embeddings.')
+        elif (params['encoder']['embedding_dropout']
+                != params['decoder']['embedding_dropout']):
+            raise ValueError('Encoder and decoder must have the same embedding '
+                             'dropout to use pretrained embeddings.')
+        #max_length = \
+        # math.ceil(loader.max_length / params['data']['window_step']) + 1
+        model = PervasiveEmbedding(
+            params['network']['block_sizes'],
+            tgt_vocab.bos,
+            loader.max_length,
+            loader.max_length,
+            loader.datasets['train'].arrays[0].shape[2],
+            params['encoder']['embedding_dim'],
+            params['encoder']['embedding_dropout'],
+            params['network']['dropout'],
+            params['decoder']['prediction_dropout'],
+            params['network']['division_factor'],
+            params['network']['growth_rate'],
+            params['network']['bias'],
+            params['network']['efficient'])
+        # Rescale loss by 100 for easier display in training output.
+        loss_func = scaled_mse_loss
+    elif params['network']['type'] == 'pervasive-bert':
+        model = PervasiveBert(
+            params['network']['block_sizes'],
+            tgt_vocab.bos,
+            loader.max_length,
+            loader.max_length,
+            params['encoder']['embedding_dim'],
+            params['encoder']['embedding_dropout'],
+            params['network']['dropout'],
+            params['decoder']['prediction_dropout'],
+            params['network']['division_factor'],
+            params['network']['growth_rate'],
+            params['network']['bias'],
+            params['network']['efficient'])
+        loss_func = F.cross_entropy
+    elif params['network']['type'] == 'pervasive':
+        model = Pervasive(
+            params['network']['block_sizes'],
+            len(src_vocab),
+            len(tgt_vocab),
+            tgt_vocab.bos,
+            loader.max_length,
+            loader.max_length,
+            params['encoder']['embedding_dim'],
+            params['encoder']['embedding_dropout'],
+            params['network']['dropout'],
+            params['decoder']['embedding_dropout'],
+            params['decoder']['prediction_dropout'],
+            params['network']['division_factor'],
+            params['network']['growth_rate'],
+            params['network']['bias'],
+            params['network']['efficient'])
+        loss_func = F.cross_entropy
+
     model.init_weights()
     if device_id is not None:
         if not torch.cuda.is_available():
@@ -225,11 +282,40 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
         if distributed:
             model = DistributedDataParallel(model, device_ids=[device_id])
     data = DataBunch(loader.loaders['train'],
-                     loader.loaders['val'],
-                     loader.loaders['test'],
+                     loader.loaders['valid'],
+                     loader.loaders['valid'],
                      device=device)
-    learn = Learner(data, model, loss_func=F.cross_entropy, model_dir=model_dir)
-    return learn, loader.src_vocab, loader.tgt_vocab
+    learn = Learner(data, model, loss_func=loss_func, model_dir=model_dir)
+    return (
+        learn, loader.loaders['train'].src_vocab,
+        loader.loaders['train'].tgt_vocab)
+
+
+def restore(learn, model_fn):
+    """
+    Restores the weights of a model saved to `model_fn` to the model of
+    the Learner `learn`.
+    """
+    epoch = None
+    if model_fn is not None:
+        try:
+            # Remove extension if provided to match `load()`'s expectation.
+            if model_fn[-4:] == '.pth':
+                model_fn = model_fn[:-4]
+            # Turning off `strict` means it is okay for the saved model not
+            # to have weights for all the parameters of the current model.
+            learn.load(model_fn, strict=False)
+        except FileNotFoundError:
+            logger.error(f'The model file {learn.model_dir}/{model_fn}.pth '
+                         'was not found!')
+            return
+        fields = model_fn.split('/')[-1].split('_')
+        if len(fields) > 1:
+            try:
+                epoch = int(fields[1]) + 1
+            except:
+                pass
+    return epoch
 
 
 def train_worker(pindex,
@@ -237,7 +323,7 @@ def train_worker(pindex,
                  params,
                  comm_file=None,
                  checkpoint=None,
-                 restore=None,
+                 restore_fn=None,
                  queues=None):
     """
     Trains the model as specified by `params` on GPU `gpu_ids[pindex]`.
@@ -258,25 +344,8 @@ def train_worker(pindex,
     learn, _, _ = build_learner(params, project_dir, pindex, comm_file, queues)
 
     # Restore saved model if necessary.
-    epoch = None
-    if restore is not None:
-        try:
-            # Remove extension if provided to match `load()`'s expectation.
-            if restore[-4:] == '.pth':
-                restore = restore[:-4]
-            learn.load(restore, purge=False)
-        except FileNotFoundError:
-            if pindex == 0:
-                # Only print once even with mulitple workers.
-                print(f'The model file {learn.model_dir}/{restore}.pth '
-                      'was not found!')
-            return
-        fields = restore.split('/')[-1].split('_')
-        if len(fields) > 1:
-            try:
-                epoch = int(fields[1]) + 1
-            except:
-                pass
+    epoch = restore(learn, restore_fn)
+
     # Callbacks.
     logs_path = learn.path / 'logs'
     ts = datetime.now().strftime('%Y%m%dT%H%M%S')
@@ -288,7 +357,8 @@ def train_worker(pindex,
         CSVLogger(learn, csv_fn),
         tbwriter,
     ]
-    learn.metrics.append(BLEUScoreMetric(learn, 5, queues, pindex))
+    if params['network']['type'] != 'pervasive-embeddings':
+        learn.metrics.append(BLEUScoreMetric(learn, 5, queues, pindex))
 
     if params['freeze']:
         if isinstance(learn.model, DistributedDataParallel):
@@ -349,6 +419,7 @@ class CSVLogger(LearnerCallback):
                 f.write(header)
 
     def on_epoch_begin(self, **kwargs):
+        """Saves the start time at the beginning of an epoch."""
         if self.add_time: self.start_epoch = time.time()
 
     def on_epoch_end(self, epoch, smooth_loss, last_metrics, **kwargs):
@@ -368,17 +439,25 @@ class CSVLogger(LearnerCallback):
 
 
 class BLEUScoreMetric(LearnerCallback):
+    """
+    A BLEU score `Callback` that generates an output sentence using beam
+    search with beam size `beam_size` and then calculates its BLEU score.
+    """
 
     def __init__(self, learn, beam_size=5, queues=None, pindex=None):
+        """
+        `queues` is a list of Queues for passing BLEU scores between processes.
+        `pindex` is the index of the current process which selects the
+                 queue of the current process from `queues`.
+        """
         super().__init__(learn)
         self.name = 'bleu'
         self.beam_size = beam_size
+        self.tgt_vocab = learn.data.valid_dl.tgt_vocab
         if isinstance(learn.model, DistributedDataParallel):
-            self.tgt_vocab = learn.model.module.tgt_vocab
             self.Ts = self.learn.model.module.Ts
             self.Tt = self.learn.model.module.Tt
         else:
-            self.tgt_vocab = learn.model.tgt_vocab
             self.Ts = self.learn.model.Ts
             self.Tt = self.learn.model.Tt
         self.eos = self.tgt_vocab.eos
@@ -387,9 +466,16 @@ class BLEUScoreMetric(LearnerCallback):
         self.pindex = pindex
 
     def on_epoch_begin(self, **kwargs):
+        """
+        Resets the BLEU score and sentence count at the beginning of each epoch.
+        """
         self.bleu, self.count = 0.0, 0
 
     def on_batch_begin(self, last_input, last_target, train, **kwargs):
+        """
+        Calculates output sentence using beam search for every batch of
+        validation examples.
+        """
         if not train:
             batch_size = last_input.size(0)
             src_data, tgt_data = last_input.split([self.Ts, self.Tt], dim=1)
@@ -419,6 +505,9 @@ class BLEUScoreMetric(LearnerCallback):
             self.bleu += bleu
 
     def on_epoch_end(self, last_metrics, train, **kwargs):
+        """
+        Passes BLEU scores between process to calculate total average.
+        """
         if not train:
             for i, q in enumerate(self.queues):
                 if i != self.pindex:
@@ -436,7 +525,7 @@ class BLEUScoreMetric(LearnerCallback):
                     time.sleep(0.1)
                     i += 1
             if i == max_iter:
-                print(f'WARNING: process {self.pindex} did not receive bleu '
-                      'scores from all sibling processes. bleu scores will '
-                      'not reflect all data.')
+                logger.warn(f'process {self.pindex} did not receive bleu '
+                            'scores from all sibling processes. bleu scores '
+                            'will not reflect all data.')
             return {'last_metrics': last_metrics + [self.bleu / self.count]}
