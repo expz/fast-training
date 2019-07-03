@@ -11,13 +11,18 @@ import urllib
 
 def beam_search(learn, src_data, beam_size, max_length):
     """
-    Beam search with given `beam_size` for the best output sequences given
-    the `src_data` input sequences.
-    
-    This is a simple algorithm that always
-    calculates `max_length` tokens instead of stopping early. It also continues
-    to calculate the probability of outputs even after a end of sequence (EOS)
-    token is output.
+    Beam search with given `beam_size` for the best output sequences of
+    maximum length `max_length` given the `src_data` input sequences.
+   
+    This is vectorized, but uses a simple algorithm that always
+    calculates `max_length` tokens instead of stopping at the end of the
+    longest sentence.
+
+     It also continues to calculate the probability of outputs even after the
+    end of sequence (EOS) token is output.
+
+    `src_data` is expected to be a torch tensor of shape
+    (batch_size, max input sentence length).
     """
     batch_size = src_data.shape[0]
     model = learn.model
