@@ -4,11 +4,11 @@ This project was developed during an Insight AI Fellowsip in the summer of 2019.
 
 The model definition used the Pervasive Attention repo (https://github.com/elbayadm/gttn2d) as a reference implementation. Unless marked with an attribution (see esp. docstrings at the beginning of classes and functions) all code is my own. If you are looking for code to reuse in your own work, here is a list of classes that I would have liked to have found implemented elsewhere instead of writing my own:
 
-* (LanguageCorpus)[https://github.com/expz/fast-training/blob/master/src/corpus.py] and its descendents make a flexible framework for forming HDF5 training sets from raw files of sentences in various ways.
+* [LanguageCorpus](https://github.com/expz/fast-training/blob/master/src/corpus.py) and its descendents make a flexible framework for forming HDF5 training sets from raw files of sentences in various ways.
 
-* (SubSampler and DistributedSampler)[https://github.com/expz/fast-training/blob/master/src/dataloader.py] implement samplers that allow epochs to be smaller than the entire training set while (1) still being randomly shuffled once for every pass through the entire dataset (2) not repeating any samples until the current pass through the training set has finished. Most tools are built on the assumption that an epoch does not take long to train, e.g., they only save checkpoints after each epoch, so this adapts a large dataset to that paradigm.
+* [SubSampler and DistributedSampler](https://github.com/expz/fast-training/blob/master/src/dataloader.py) implement samplers that allow epochs to be smaller than the entire training set while (1) still being randomly shuffled once for every pass through the entire dataset (2) not repeating any samples until the current pass through the training set has finished. Most tools are built on the assumption that an epoch does not take long to train, e.g., they only save checkpoints after each epoch, so this adapts a large dataset to that paradigm.
 
-* (`beam_search()`)[https://github.com/expz/fast-training/blob/master/src/evaluate.py] performs a vectorized beam search for the best outputs for a batch of input sentences. It assumes the model works iteratively by initially taking in the input sentence and a beginning of sequence (BOS) token and outputing the first token of the sentence. Then the input sentence and the BOS and first output token are fed into the network to get the second output token, etc.
+* [beam_search()](https://github.com/expz/fast-training/blob/master/src/evaluate.py) performs a vectorized beam search for the best outputs for a batch of input sentences. It assumes the model works iteratively by initially taking in the input sentence and a beginning of sequence (BOS) token and outputing the first token of the sentence. Then the input sentence and the BOS and first output token are fed into the network to get the second output token, etc.
 
 ## Requisites
 
