@@ -4,13 +4,11 @@ sentences together with their vocabularies.
 """
 
 import dask.array
-import h5py
 import math
-import numpy as np
 import pickle
 import torch
 from torch.utils.data.distributed import DistributedSampler
-from torch.utils.data import DataLoader, SequentialSampler
+from torch.utils.data import SequentialSampler
 import torch.utils.data  # Need this to avoid "module has no attribute 'data'".
 
 
@@ -20,7 +18,7 @@ from dataset import DaskDataset, H5Dataset
 class SubSampler(SequentialSampler):
     """
     This class is a sampler for a PyTorch `DataLoader`.
-    
+
     It allows epochs which are smaller than the size of an entire dataset.
 
     It also shuffles the dataset using a deterministic seed.
@@ -40,16 +38,16 @@ class SubSampler(SequentialSampler):
 
         The first epoch has `epoch == 0`.
         """
-        n = epoch * self.epoch_size
-        l = len(self.dataset)
+        s = epoch * self.epoch_size
+        n = len(self.dataset)
 
         # Deterministically shuffle based on epoch so that distinct processes
         # shuffle in the same way.
         g = torch.Generator()
-        g.manual_seed(n // l)
-        indices = torch.randperm(l, generator=g).tolist()
+        g.manual_seed(s // n)
+        indices = torch.randperm(n, generator=g).tolist()
 
-        indices = indices[n % l:n % l + self.epoch_size]
+        indices = indices[s % n:s % n + self.epoch_size]
 
         # Loop back to add extra samples to have a full size epoch.
         indices += indices[:(self.epoch_size - len(indices))]
@@ -144,10 +142,15 @@ class VocabData(object):
     ]
 
     def __init__(self, vocab):
+        """
+        `vocab` should be either the name of a file of tokens, one per line,
+        or else a dictionary mapping tokens to integer indices.
+        """
         if isinstance(vocab, str):
             with open(vocab, 'r') as f:
                 self.word_to_idx = {
                     word: idx for idx, word in enumerate(f.read().split('\n'))
+                    if word.strip()
                 }
         elif isinstance(vocab, dict):
             self.word_to_idx = vocab
@@ -224,7 +227,8 @@ class PervasiveDataLoader(object):
     validation and testing. It also contains three `DataLoader` objects,
     one for each dataset.
 
-    Adapted from https://github.com/elbayadm/attn2d/blob/master/nmt/loader/dataloader.py
+    Adapted from
+    https://github.com/elbayadm/attn2d/blob/master/nmt/loader/dataloader.py
     """
 
     def __init__(self,
@@ -245,8 +249,8 @@ class PervasiveDataLoader(object):
         self.datasets = {}
         self.loaders = {}
         for dsname in ['train', 'valid']:
-            src = H5Dataset(src_h5, dsname).data[:,:max_length + 1]
-            tgt = H5Dataset(tgt_h5, dsname).data[:,:max_length + 1]
+            src = H5Dataset(src_h5, dsname).data[:, :max_length + 1]
+            tgt = H5Dataset(tgt_h5, dsname).data[:, :max_length + 1]
             self.max_length = \
                 min(self.max_length + 1, src.shape[1], tgt.shape[1])
             srctgt = dask.array.concatenate((src, tgt), axis=1)
@@ -263,8 +267,6 @@ class PervasiveDataLoader(object):
                 tgt2 = tgt2[:max_val_size]
             self.datasets[dsname] = DaskDataset(srctgt, tgt2)
 
-            # Training set is currently sampled randomly for training
-            # and deterministically for validation and test.
             if distributed:
                 sampler = DistributedSubSampler(
                     self.datasets[dsname], epoch_size=epoch_sz)

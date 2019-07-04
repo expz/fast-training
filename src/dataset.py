@@ -93,7 +93,7 @@ class H5Dataset(torch.utils.data.Dataset):
     def get_batch(self, indices):
         """Get a batch of rows corresponding to `indices`."""
         return torch.tensor(np.array(self.data[indices]), dtype=self.dtype)
-        
+
     def size(self, dim):
         """Get the size of dimension `dim` of the dataset."""
         return self.data.shape[dim]

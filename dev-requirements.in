@@ -1,7 +1,17 @@
+dask[array]
+h5py
+falcon
+fastai
+fire
+gunicorn
+numpy
 pip-tools
 pytest
+pytorch_pretrained_bert
+PyYAML
 streamlit
 subword-nmt
 tensorboard
 tensorboardX
+torch
 yapf

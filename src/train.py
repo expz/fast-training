@@ -2,22 +2,19 @@
 These functions implement machine translation model training.
 """
 
-from collections import OrderedDict
 from datetime import datetime
 from fastai.basic_data import DataBunch
 from fastai.callbacks import LearnerCallback, SaveModelCallback
 from fastai.callbacks.tensorboard import LearnerTensorboardWriter
-from fastai.train import validate, Learner
+from fastai.train import Learner
 from fastprogress.fastprogress import format_time
 import logging
-import math
 import os
 import pandas as pd
 import time
 import torch
 import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
-from torch.utils.data import DataLoader
 
 from bleu import bleu_score
 from dataloader import PervasiveDataLoader, VocabData
@@ -42,80 +39,6 @@ def check_params(params, param_list):
                 val = val[key]
         except (KeyError, TypeError):
             raise ValueError(f'Expected parameter "{param}" not supplied.')
-
-
-def build_learner_without_data(params, project_dir):
-    """
-    This builds a learner without loading data so that it loads more quickly.
-
-    It is especially useful for doing predictions.
-    """
-    model_name = params['model_name']
-    model_dir = os.path.join(project_dir, 'model', model_name)
-    try:
-        # Try to make the directory for saving models.
-        os.makedirs(model_dir)
-    except FileExistsError:
-        pass
-
-    # Configure GPU/CPU device settings.
-    gpu_ids = params['gpu_ids']
-    if gpu_ids:
-        device_id = gpu_ids[0]
-        device_name = torch.cuda.get_device_name(device_id)
-        device = torch.device(device_id)
-        torch.cuda.set_device(device_id)
-    else:
-        device_id = None
-        device_name = 'cpu'
-        device = torch.device('cpu')
-
-    data_dir = params['data']['dir']
-    src_l = params['data']['src']
-    tgt_l = params['data']['tgt']
-    src_vocab = VocabData(os.path.join(data_dir, f'{src_l}.infos'))
-    tgt_vocab = VocabData(os.path.join(data_dir, f'{tgt_l}.infos'))
-
-    # Define neural network.
-    check_params(params, [
-        'decoder.embedding_dim',
-        'decoder.embedding_dropout',
-        'decoder.prediction_dropout',
-        'encoder.embedding_dim',
-        'encoder.embedding_dropout',
-        'network.bias',
-        'network.block_sizes',
-        'network.division_factor',
-        'network.dropout',
-        'network.efficient',
-        'network.growth_rate',
-    ])
-    # Max length is 1 more than setting to account for BOS.
-    model = Pervasive(
-        model_name, src_vocab, tgt_vocab, params['network']['block_sizes'],
-        params['data']['max_length'] + 1, params['data']['max_length'] + 1,
-        params['encoder']['embedding_dim'], params['decoder']['embedding_dim'],
-        params['encoder']['embedding_dropout'], params['network']['dropout'],
-        params['decoder']['embedding_dropout'],
-        params['decoder']['prediction_dropout'],
-        params['network']['division_factor'], params['network']['growth_rate'],
-        params['network']['bias'], params['network']['efficient'])
-
-    model.init_weights()
-    dummy = torch.tensor([])
-    if device_id is not None:
-        if not torch.cuda.is_available():
-            raise ValueError(
-                'Request to train on GPU {device_id}, but not GPU found.')
-        model.cuda(device_id)
-        dummy.cuda(device_id)
-    dataset = torch.utils.data.TensorDataset(dummy, dummy)
-    data = DataBunch(DataLoader(dataset),
-                     DataLoader(dataset),
-                     DataLoader(dataset),
-                     device=device)
-    learn = Learner(data, model, loss_func=F.cross_entropy, model_dir=model_dir)
-    return learn, src_vocab, tgt_vocab
 
 
 def scaled_mse_loss(y, y_hat):
@@ -173,12 +96,10 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
     distributed = world_size > 1
     if gpu_ids:
         device_id = gpu_ids[pindex]
-        device_name = torch.cuda.get_device_name(device_id)
         device = torch.device(device_id)
         torch.cuda.set_device(device_id)
     else:
         device_id = None
-        device_name = 'cpu'
         device = torch.device('cpu')
 
     # If distributed, initialize inter-process communication using shared file.
@@ -223,8 +144,6 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
                 != params['decoder']['embedding_dropout']):
             raise ValueError('Encoder and decoder must have the same embedding '
                              'dropout to use pretrained embeddings.')
-        #max_length = \
-        # math.ceil(loader.max_length / params['data']['window_step']) + 1
         model = PervasiveEmbedding(
             params['network']['block_sizes'],
             tgt_vocab.bos,
@@ -315,7 +234,7 @@ def restore(learn, model_fn):
         if len(fields) > 1:
             try:
                 epoch = int(fields[1]) + 1
-            except:
+            except ValueError:
                 pass
     return epoch
 
@@ -368,7 +287,8 @@ def train_worker(pindex,
         model = learn.model
         learn.split([model.linear, model.prediction_dropout])
         # Untie target language embedding weights from input layer.
-        model.prediction.weight = torch.nn.Parameter(prediction.weight.clone())
+        model.prediction.weight = torch.nn.Parameter(
+            model.prediction.weight.clone())
         learn.freeze_to(1)
 
     # Train with a one cycle schedule for each epoch.
@@ -422,7 +342,8 @@ class CSVLogger(LearnerCallback):
 
     def on_epoch_begin(self, **kwargs):
         """Saves the start time at the beginning of an epoch."""
-        if self.add_time: self.start_epoch = time.time()
+        if self.add_time:
+            self.start_epoch = time.time()
 
     def on_epoch_end(self, epoch, smooth_loss, last_metrics, **kwargs):
         "Add a line with `epoch` number, `smooth_loss` and `last_metrics`."

@@ -1,11 +1,7 @@
-dask
-falcon
-fastai
-fire
-gunicorn
+dask[array]
 h5py
-numpy
-pandas<0.24.0  # A bug in odo (called by blaze) requires old version.
-pytorch_pretrained_bert
+falcon
+gunicorn
 PyYAML
+pytorch_pretrained_bert
 torch

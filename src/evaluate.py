@@ -2,6 +2,7 @@ import numpy as np
 import os
 import re
 import subprocess
+import sys
 import tempfile
 import torch
 from torch.nn.parallel import DistributedDataParallel
@@ -9,23 +10,22 @@ import traceback
 import urllib
 
 
-def beam_search(learn, src_data, beam_size, max_length):
+def beam_search(model, src_data, beam_size, max_length):
     """
     Beam search with given `beam_size` for the best output sequences of
     maximum length `max_length` given the `src_data` input sequences.
-   
+
     This is vectorized, but uses a simple algorithm that always
     calculates `max_length` tokens instead of stopping at the end of the
     longest sentence.
 
-     It also continues to calculate the probability of outputs even after the
+    It also continues to calculate the probability of outputs even after the
     end of sequence (EOS) token is output.
 
     `src_data` is expected to be a torch tensor of shape
     (batch_size, max input sentence length).
     """
     batch_size = src_data.shape[0]
-    model = learn.model
     if isinstance(model, DistributedDataParallel):
         model = model.module
     offsets = torch.tensor(range(0, batch_size * beam_size * beam_size,
@@ -102,6 +102,10 @@ def moses_bleu_score(hypotheses, references, lowercase=False):
 
     The bleu score script is downloaded as needed.
 
+    This is not used for evaluation. It is only used to test that the
+    Python implementation of the BLEU score matches the standard
+    Moses implementation that everyone uses.
+
     Adapted from
     https://pytorchnlp.readthedocs.io/en/latest/
             _modules/torchnlp/metrics/bleu.html
@@ -125,7 +129,7 @@ def moses_bleu_score(hypotheses, references, lowercase=False):
             os.makedirs(os.path.dirname(bleu_path), exist_ok=True)
             urllib.request.urlretrieve(moses_url, filename=bleu_path)
             os.chmod(bleu_path, 0o755)
-    except:
+    except Exception:
         print("Unable to fetch multi-bleu.perl script")
         print(traceback.format_exception_only(sys.last_type, sys.last_value))
         return None

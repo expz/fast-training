@@ -94,7 +94,7 @@ class LanguageCorpus:
         """Tokenizes into BPE tokens using a perl script from Moses."""
         tokenizer_fn = remove_nonprint.split('/')[-1]
         tokenizer_path = os.path.join(self.data_dir, tokenizer_fn)
-        if not os.path.isfile(tokenize_path):
+        if not os.path.isfile(tokenizer_path):
             urllib.request.urlretrieve(tokenizer_url, filename=tokenizer_path)
         tok_path = os.path.join(self.data_dir, self.name, 'tokens')
         for lang in langs:
@@ -109,23 +109,21 @@ class LanguageCorpus:
                     f'Using previously tokenized dataset {data_path}.{lang}')
         return tok_path
 
-    def _encode(self, tok_path, langs):
+    def _encode(self, tok_path, langs, joint_vocab_size):
         """
         Tokenizes sentences using `subword-nmt` and converts them to sequences
         of integers.
         """
         vocab_path = os.path.join(self.data_dir, self.name, 'vocab')
         codes_path = os.path.join(self.data_dir, self.name, 'bpe_codes')
-        learn_cmd = [
-            'subword-nmt', 'learn-joint-bpe-and-vocab',
-            '--input', f'{tok_path}.{lang1}', f'{tok_path}.{lang2}',
-            '-s', joint_vocab_size, '-o', codes_path, '--write-vocabulary',
-            f'{vocab_path}.{lang1}', f'{vocab_path}.{lang2}'
-        ]
-        learn_out = subprocess.check_output(
-            learn_cmd, stderr=subprocess.STDOUT).decode('utf-8')
+        learn_cmd = (
+            'subword-nmt learn-joint-bpe-and-vocab '
+            f'--input {tok_path}.{langs[0]} {tok_path}.{langs[1]}'
+            f'-s {joint_vocab_size} -o {codes_path} --write-vocabulary'
+            f'{vocab_path}.{langs[0]} {vocab_path}.{langs[1]}')
+        os.system(learn_cmd)
         bpe_toks = {}
-        for lang in (lang1, lang2):
+        for lang in langs:
             with open(f'{vocab_path}.{lang}', 'r') as f_vocab:
                 vocab = f_vocab.read().split('\n')
             vocab = ['[PAD]', '[UNK]', '[CLS]', '[SEP]'] + vocab
@@ -174,8 +172,7 @@ class LanguageCorpus:
         """Creates train and validation datasets from files `datafiles`."""
         out_path, langs = self._clean(datafiles, max_size, use_cache)
         tok_path = self._tokenize(out_path, langs)
-        lang1, lang2 = langs[0], langs[1]
-        bpe_toks = self._encode(tok_path, langs)
+        bpe_toks = self._encode(tok_path, langs, joint_vocab_size)
         if self.shuffle:
             bpe_toks = self._shuffle(bpe_toks)
         return self._save(bpe_toks, valid_size, dtype='int32')
@@ -189,7 +186,7 @@ class BertCorpus(LanguageCorpus):
     BERT's multilingual vocabulary supports 100 languages in one, so it has
     approximately 114,000 tokens.
     """
-    def __init__(self, 
+    def __init__(self,
                  name,
                  shuffle=True,
                  max_length=200):
@@ -243,7 +240,7 @@ class BertCorpus(LanguageCorpus):
                 ]
                 lengths[lang] = [len(sent) for sent in ts]
                 empty_lines.update(
-                    [i for i, l in enumerate(lengths[lang]) if l == 0])
+                    [i for i, ll in enumerate(lengths[lang]) if ll == 0])
 
                 # Vectors will have length `max_len + 1` to account for BOS.
                 max_len = max(lengths[lang])
@@ -251,15 +248,15 @@ class BertCorpus(LanguageCorpus):
                 logging.info(f'Adding BOS, EOS and PAD tokens for {lang}.')
                 toks[lang] = [
                     ([self.bos] + sent + [self.eos]
-                        + [self.pad] * (max_len - len(sent) - 1)
-                        )[:max_len + 1]
+                        + [self.pad] * (max_len - len(sent) - 1))[:max_len + 1]
                     for sent in ts
                 ]
 
         # Remove pairs of sentences with at least one empty sentence.
         for lang in langs:
             toks[lang] = [
-                sent for i, sent in enumerate(toks[lang]) if i not in empty_lines
+                sent
+                for i, sent in enumerate(toks[lang]) if i not in empty_lines
             ]
             lengths[lang] = [
                 l for i, l in enumerate(lengths[lang]) if i not in empty_lines
@@ -325,7 +322,7 @@ class BertCorpus(LanguageCorpus):
 
 class LowResolutionCorpus(BertCorpus):
 
-    def __init__(self, 
+    def __init__(self,
                  name,
                  shuffle=True,
                  max_length=200):
@@ -339,7 +336,7 @@ class LowResolutionCorpus(BertCorpus):
 
         The indices of discarded tokens agree across languages.
         """
-        max_len = len(sent[0])
+        max_len = len(toks[toks.keys()[0]][0])
         n = math.floor(max_len * p)
         new_toks = {}
         new_lens = {}
@@ -354,7 +351,8 @@ class LowResolutionCorpus(BertCorpus):
                 new_toks[lang].append([sent[i] for i in indices])
         return new_toks, new_lens
 
-    def create(self, datafiles, p=0.5, valid_size=0, shuffle=True):
+    def create(self, datafiles, p=0.5, valid_size=0, shuffle=True,
+               max_size=None, use_cache=False):
         """
         Create the dataset from `datafiles` by keeping `p` percent of
         the input/output tokens.
@@ -401,11 +399,11 @@ class WindowedCorpus(BertCorpus):
             new_toks[lang] = []
             new_lens[lang] = []
             for i, sent in enumerate(toks[lang]):
-                l = lens[lang][i]
+                n = lens[lang][i]
                 new_toks[lang].append(sent[:window_size])
-                new_lens[lang].append(min(l, window_size - 1))
-                new_toks[lang].append(sent[l // 2:l // 2 + window_size])
-                new_lens[lang].append(min(l - l // 2, l // 2 + window_size))
+                new_lens[lang].append(min(n, window_size - 1))
+                new_toks[lang].append(sent[n // 2:n // 2 + window_size])
+                new_lens[lang].append(min(n - n // 2, n // 2 + window_size))
         return new_toks, new_lens
 
     def create(self, datafiles, max_size=None, window_size=25, valid_size=0,
@@ -427,7 +425,7 @@ class EmbeddingCorpus(BertCorpus):
     This class represents a corpus composed of embedding vectors.
     """
 
-    def __init__(self, 
+    def __init__(self,
                  name,
                  shuffle=True,
                  max_length=200):
@@ -479,7 +477,7 @@ class EmbeddingCorpus(BertCorpus):
             np.array(bert_emb(torch.tensor([self.pad]))[0], dtype=np.float32)
         return embs
 
-    def _save(self, embs):
+    def _save(self, embs, valid_size):
         """Saves the dask arrays in `embs` to HDF5 files."""
         h5path = os.path.join(self.data_dir, self.name)
         h5files = []
@@ -502,7 +500,7 @@ class EmbeddingCorpus(BertCorpus):
         embs = self._embed(toks)
 
         # Save the datasets to an hdf5 file on disk.
-        return self._save(embs)
+        return self._save(embs, valid_size)
 
 
 class LowResolutionEmbeddingCorpus(EmbeddingCorpus):
@@ -514,7 +512,7 @@ class LowResolutionEmbeddingCorpus(EmbeddingCorpus):
     The EOS and PAD tokens are preserved *without* averaging.
     """
 
-    def __init__(self, 
+    def __init__(self,
                  name,
                  window_step=2,
                  window_size=2,
@@ -545,7 +543,8 @@ class LowResolutionEmbeddingCorpus(EmbeddingCorpus):
                 return emb
             elif lengths[row] == col - 1:
                 return eos_emb
-            elif col - 1 > lengths[row] and col <= lengths[row] + self.window_size:
+            elif (col - 1 > lengths[row]
+                    and col <= lengths[row] + self.window_size):
                 return pad_emb
             return emb
 
@@ -554,7 +553,8 @@ class LowResolutionEmbeddingCorpus(EmbeddingCorpus):
                            .repeat(embs.shape[0], axis=0))
         avg_embs = dask.array.concatenate(
             [bos] + [
-                embs[:,i:i + self.window_size,:].mean(axis=1, keepdims=True)
+                embs[:, i:i + self.window_size, :].mean(
+                    axis=1, keepdims=True)
                 for i in range(1, embs.shape[1], self.window_step)
             ], axis=1).astype(np.float32)
 

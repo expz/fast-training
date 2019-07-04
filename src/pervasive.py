@@ -12,13 +12,11 @@ for image recognition problems.
 import functools
 import math
 from collections import OrderedDict
-from pytorch_pretrained_bert import BertTokenizer, BertModel
+from pytorch_pretrained_bert import BertModel
 import torch
 from torch import nn
 import torch.nn.functional as F
 import torch.utils.checkpoint as cp
-
-from dataloader import VocabData
 
 
 # Cache most recent function result using @cache decorator.
@@ -78,7 +76,7 @@ class MaskedConv2d(nn.Conv2d):
 class DenseLayer(nn.Module):
     """
     Layer of a DenseNet.
-    
+
     Adapted from https://github.com/elbayadm/attn2d/blob/
                          master/nmt/models/efficient_densenet.py
     """
@@ -123,8 +121,12 @@ class DenseLayer(nn.Module):
 
         def bottleneck(*inputs):
             """
-            Apply the bottleneck sub-layer that collapses to 4 * growth_factor channels.
-            Defined so that we can apply `torch.utils.checkpoint.checkpoint`.
+            Apply the bottleneck sub-layer that collapses to 4 * growth_factor
+            channels. Defined so that we can apply
+            `torch.utils.checkpoint.checkpoint`.
+
+            Adapted from https://github.com/elbayadm/attn2d/blob/master/
+                                 nmt/models/efficient_densenet.py
             """
             cat_input = torch.cat(inputs, 1)
             return self.conv1(self.relu1(self.norm1(cat_input)))
@@ -151,7 +153,7 @@ class DenseLayer(nn.Module):
 class DenseBlock(nn.Module):
     """
     Block of layers in a DenseNet.
-    
+
     Adapted from
     https://github.com/elbayadm/attn2d/
             blob/master/nmt/models/efficient_densenet.py
@@ -190,9 +192,9 @@ class DenseBlock(nn.Module):
 class Transition(nn.Sequential):
     """
     Transiton layer between dense blocks to reduce number of channels.
-    
+
     BN > ReLU > Conv(k=1)
-    
+
     From
     https://github.com/elbayadm/attn2d/
             blob/master/nmt/models/efficient_densenet.py
@@ -211,12 +213,13 @@ class Transition(nn.Sequential):
 
 
 class DenseNet(nn.Module):
-    """ 
-    A `DenseNet` is made of a sequence of one or more `DenseBlock`s each followed
-    by a `Transition` convolutional layer.
+    """
+    A `DenseNet` is made of a sequence of one or more `DenseBlock`s each
+    followed by a `Transition` convolutional layer.
 
-    The setting `efficient` makes the model much more memory efficient, but slower.
-    
+    The setting `efficient` makes the model much more memory efficient, but
+    slower.
+
     Adapted from
     https://github.com/elbayadm/attn2d/
             blob/master/nmt/models/efficient_densenet.py
@@ -316,13 +319,13 @@ class PermutationLayer(nn.Module):
         self.dims = dims
 
     def forward(self, X):
-        return X.permute(*dims)
+        return X.permute(*self.dims)
 
 
-class Pervasive(nn.Module):
+class PervasiveOriginal(nn.Module):
     """
     Pervasive Attention Network.
-    
+
     This is a reimplementation of the model in
     https://github.com/elbayadm/attn2d/
             blob/master/nmt/models/pervasive.py
@@ -354,7 +357,7 @@ class Pervasive(nn.Module):
         self.tgt_embedding = nn.Embedding(tgt_vocab_sz, emb_size)
 
         self.network = PervasiveNetwork(
-            block_sizes, Ts, Tt, emb_size, conv_dropout, divison_factor,
+            block_sizes, Ts, Tt, emb_size, conv_dropout, division_factor,
             growth_rate, bias, efficient)
 
         self.prediction_dropout = nn.Dropout(prediction_dropout)
@@ -441,10 +444,107 @@ class Pervasive(nn.Module):
         return logits[:, -1, :]
 
 
+class Pervasive(PervasiveOriginal):
+    """
+    A modificiation of the pervasive attention model at
+
+    https://github.com/elbayadm/attn2d/
+            blob/master/nmt/models/pervasive.py
+
+    Using the default settings, it takes in embedding vector of size 768
+    and a linear layer reduces them to size 128. From there the model is
+    the same until the output layer where a linear layer increases the
+    output from 128 dimensions back to 768.
+
+    This is the model used by translation scripts, because it allows the
+    use of Bert embeddings, but it does not require loading the Bert
+    model, because its weights are meant to be loaded from a saved
+    `PervasiveBert` model.
+    """
+
+    def __init__(self,
+                 block_sizes,
+                 vocab_sz,
+                 bos,
+                 Ts=51,
+                 Tt=51,
+                 initial_emb_size=768,
+                 emb_size=128,
+                 emb_dropout=0.2,
+                 conv_dropout=0.2,
+                 prediction_dropout=0.2,
+                 division_factor=2,
+                 growth_rate=32,
+                 bias=False,
+                 efficient=False):
+        nn.Module.__init__(self)
+
+        self.bos = bos
+        self.Ts = Ts
+        self.Tt = Tt
+
+        self.emb_dropout = nn.Dropout(emb_dropout)
+        self.embedding = nn.Embedding(vocab_sz, initial_emb_size)
+
+        # Embed and project to a lower-dimensional embedding.
+        self.projection = nn.Sequential(OrderedDict([
+            ('projection_dropout', nn.Dropout(emb_dropout)),
+            ('projection', nn.Linear(initial_emb_size, emb_size)),
+            # ('projection_perm1', PermutationLayer(0, 2, 1)),
+            # ('projection_norm', nn.BatchNorm1d(emb_size)),
+            # ('projection_perm2', PermutationLayer(0, 2, 1)),
+            ('projection_relu', nn.ReLU(inplace=True)),
+        ]))
+
+        # Source and target embeddings will be concatenated to form input.
+        self.network = PervasiveNetwork(
+            block_sizes, Ts, Tt, emb_size, conv_dropout, division_factor,
+            growth_rate, bias, efficient)
+
+        # Output layer.
+        self.unprojection_dropout = nn.Dropout(emb_dropout)
+        self.unprojection = nn.Linear(emb_size, initial_emb_size)
+        self.unprojection_norm = nn.BatchNorm1d(initial_emb_size)
+        self.unprojection_relu = nn.ReLU(inplace=True)
+        self.prediction_dropout = nn.Dropout(prediction_dropout)
+        self.prediction = \
+            nn.Linear(initial_emb_size, vocab_sz)
+        self.prediction.weight = self.embedding.weight
+        self.prediction.weight.requires_grad = False
+
+    def _forward(self, src_data, tgt_data):
+        """
+        Forward pass of `data` through the entire model.
+        """
+        # Embedding with projection.
+        src_emb = self.projection(self.embedding(src_data))
+        tgt_emb = self.projection(self.embedding(tgt_data))
+        src_grid = src_emb.unsqueeze(1).repeat(1, tgt_emb.shape[1], 1, 1)
+        tgt_grid = tgt_emb.unsqueeze(2).repeat(1, 1, src_emb.shape[1], 1)
+        X = torch.cat((src_grid, tgt_grid), dim=3)
+
+        # Embedding dim becomes channels.
+        X = X.permute(0, 3, 1, 2)
+
+        # Pass data through DenseNet.
+        X = self.network(X)
+
+        # Unprojection layer.
+        X = self.unprojection(self.unprojection_dropout(X))
+        X = X.permute(0, 2, 1)
+        X = self.unprojection_norm(X)
+        X = X.permute(0, 2, 1)
+        X = self.unprojection_relu(X)
+
+        X = self.prediction(self.prediction_dropout(X))
+        return X
+
+
 class PervasiveBert(Pervasive):
     """
     This class is a Pervasive neural network which uses BERT pre-trained
-    multilingual, cased embeddings. The embeddings are 
+    multilingual, cased embeddings. The embeddings are 768-dimensional
+    and are projected down to 128 dimension before being fed into the network.
     """
 
     def __init__(self,
@@ -475,9 +575,9 @@ class PervasiveBert(Pervasive):
         self.projection = nn.Sequential(OrderedDict([
             ('projection_dropout', nn.Dropout(emb_dropout)),
             ('projection', nn.Linear(self.embedding.embedding_dim, emb_size)),
-            #('projection_perm1', PermutationLayer(0, 2, 1)),
-            #('projection_norm', nn.BatchNorm1d(emb_size)),
-            #('projection_perm2', PermutationLayer(0, 2, 1)),
+            # ('projection_perm1', PermutationLayer(0, 2, 1)),
+            # ('projection_norm', nn.BatchNorm1d(emb_size)),
+            # ('projection_perm2', PermutationLayer(0, 2, 1)),
             ('projection_relu', nn.ReLU(inplace=True)),
         ]))
 
@@ -492,49 +592,10 @@ class PervasiveBert(Pervasive):
         self.unprojection_norm = nn.BatchNorm1d(bert_emb.embedding_dim)
         self.unprojection_relu = nn.ReLU(inplace=True)
         self.prediction_dropout = nn.Dropout(prediction_dropout)
-        self.prediction = nn.Linear(bert_emb.embedding_dim, bert_emb.num_embeddings)
+        self.prediction = \
+            nn.Linear(bert_emb.embedding_dim, bert_emb.num_embeddings)
         self.prediction.weight = self.embedding.weight
         self.prediction.weight.requires_grad = False
-
-    def _forward(self, src_data, tgt_data):
-        """
-        Forward pass of `data` through the network.
-        """
-        # Embedding with projection.
-        src_emb = self.projection(self.embedding(src_data))
-        tgt_emb = self.projection(self.embedding(tgt_data))
-        src_grid = src_emb.unsqueeze(1).repeat(1, tgt_emb.shape[1], 1, 1)
-        tgt_grid = tgt_emb.unsqueeze(2).repeat(1, 1, src_emb.shape[1], 1)
-        X = torch.cat((src_grid, tgt_grid), dim=3)
-
-        # Embedding dim becomes channels.
-        X = X.permute(0, 3, 1, 2)
-
-        # Pass data through DenseNet.
-        X = self.network(X)
-
-        # Unprojection layer.
-        X = self.unprojection(self.unprojection_dropout(X))
-        X = X.permute(0, 2, 1)
-        X = self.unprojection_norm(X)
-        X = X.permute(0, 2, 1)
-        X = self.unprojection_relu(X)
-
-        X = self.prediction(self.prediction_dropout(X))
-        return X
-
-    def predict(self, src_data, tgt_data=None):
-        """
-        Predict next output token for each batch example based on `src_data`
-        and the previous output `tgt_data`. The output `tgt_data` should
-        not contain beginning of sequence (BOS) tokens.
-        """
-        tgt_cols = self.get_bos_col(src_data.shape[0], src_data.device)
-        if tgt_data is not None:
-            tgt_cols = torch.cat((tgt_cols, tgt_data), dim=1)
-        X = self._forward(src_data, tgt_cols)
-        logits = F.log_softmax(X, dim=2)
-        return logits[:, -1, :]
 
 
 class PervasiveEmbedding(Pervasive):

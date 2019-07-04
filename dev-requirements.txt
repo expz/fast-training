@@ -7,45 +7,82 @@
 absl-py==0.7.1            # via tensorboard
 argh==0.26.2              # via watchdog
 atomicwrites==1.3.0       # via pytest
-attrs==19.1.0             # via pytest
+attrs==19.1.0             # via jsonschema, pytest
 base58==1.0.3             # via streamlit
+beautifulsoup4==4.7.1     # via fastai
 blinker==1.4              # via streamlit
-boto3==1.9.176            # via streamlit
+blis==0.2.4               # via spacy, thinc
+boto3==1.9.176            # via pytorch-pretrained-bert, streamlit
 botocore==1.12.176        # via boto3, s3transfer, streamlit
+bottleneck==1.2.1         # via fastai
+certifi==2019.6.16        # via requests
+chardet==3.0.4            # via requests
 click==7.0                # via pip-tools, streamlit
+cycler==0.10.0            # via matplotlib
+cymem==2.0.2              # via preshed, spacy, thinc
+dask[array]==2.0.0
+dataclasses==0.6          # via fastai
 docutils==0.14            # via botocore, streamlit
 enum-compat==0.0.2        # via streamlit
+fastai==1.0.54
+fastprogress==0.1.21      # via fastai
+fire==0.1.3
 future==0.17.1            # via streamlit
 grpcio==1.21.1            # via tensorboard
+h5py==2.9.0
+idna==2.8                 # via requests
 importlib-metadata==0.18  # via pluggy, pytest
 jmespath==0.9.4           # via boto3, botocore
+jsonschema==3.0.1         # via spacy
+kiwisolver==1.1.0         # via matplotlib
 markdown==3.1.1           # via tensorboard
+matplotlib==3.1.1         # via fastai
 more-itertools==7.0.0     # via pytest
-numpy==1.16.4             # via pandas, streamlit, tensorboard, tensorboardx
-packaging==19.0           # via pytest
-pandas==0.24.2            # via streamlit
+murmurhash==1.0.2         # via spacy, thinc
+numexpr==2.6.9            # via fastai
+numpy==1.16.4
+nvidia-ml-py3==7.352.0    # via fastai
+packaging==19.0           # via fastai, pytest
+pandas==0.24.2            # via fastai, streamlit
 pathtools==0.1.2          # via watchdog
-pillow==6.0.0             # via streamlit
+pillow==6.0.0             # via fastai, streamlit, torchvision
 pip-tools==3.8.0
+plac==0.9.6               # via spacy, thinc
 pluggy==0.12.0            # via pytest
+preshed==2.0.1            # via spacy, thinc
 protobuf==3.8.0           # via streamlit, tensorboard, tensorboardx
 psutil==5.6.3             # via streamlit
 py==1.8.0                 # via pytest
-pyparsing==2.4.0          # via packaging
+pyparsing==2.4.0          # via matplotlib, packaging
+pyrsistent==0.15.2        # via jsonschema
 pytest==4.6.3
-python-dateutil==2.8.0    # via botocore, pandas
+python-dateutil==2.8.0    # via botocore, matplotlib, pandas
+pytorch-pretrained-bert==0.6.2
 pytz==2019.1              # via pandas, tzlocal
-pyyaml==5.1.1             # via watchdog
+pyyaml==5.1.1
+regex==2019.6.8           # via pytorch-pretrained-bert
+requests==2.22.0          # via fastai, pytorch-pretrained-bert, spacy
 s3transfer==0.2.1         # via boto3
-six==1.12.0               # via absl-py, grpcio, packaging, pip-tools, protobuf, pytest, python-dateutil, tensorboard, tensorboardx
+scipy==1.3.0              # via fastai
+six==1.12.0               # via absl-py, cycler, fire, grpcio, h5py, jsonschema, packaging, pip-tools, protobuf, pyrsistent, pytest, python-dateutil, tensorboard, tensorboardx, torchvision
+soupsieve==1.9.2          # via beautifulsoup4
+spacy==2.1.4              # via fastai
+srsly==0.0.7              # via spacy, thinc
 streamlit==0.41.0
 subword-nmt==0.3.6
 tensorboard==1.14.0
 tensorboardx==1.7
+thinc==7.0.4              # via spacy
 toml==0.10.0              # via streamlit
+toolz==0.9.0              # via dask
+torch==1.1.0
+torchvision==0.3.0        # via fastai
 tornado==5.1.1            # via streamlit
+tqdm==4.32.2              # via pytorch-pretrained-bert, thinc
+typing==3.7.4             # via fastai
 tzlocal==1.5.1            # via streamlit
-urllib3==1.25.3           # via botocore
+urllib3==1.25.3           # via botocore, requests
+wasabi==0.2.2             # via spacy, thinc
 watchdog==0.9.0           # via streamlit
 wcwidth==0.1.7            # via pytest
 werkzeug==0.15.4          # via tensorboard
@@ -54,4 +91,4 @@ yapf==0.27.0
 zipp==0.5.1               # via importlib-metadata
 
 # The following packages are considered to be unsafe in a requirements file:
-# setuptools==41.0.1        # via markdown, protobuf, tensorboard
+# setuptools==41.0.1        # via jsonschema, kiwisolver, markdown, protobuf, tensorboard
