@@ -261,11 +261,14 @@ class PervasiveApp(object):
         """
         with open(config, 'r') as f:
             params = yaml.load(f, Loader=yaml.SafeLoader)
+
+        # Load the default config if any.
         default_config = params.get('default_config', None)
         if default_config:
             with open(default_config, 'r') as f:
                 load_defaults(params, yaml.load(f, Loader=yaml.SafeLoader))
 
+        # Save command line arguments to parameters
         if device_ids is not None:
             if not isinstance(device_ids, list):
                 device_ids = [device_ids]
@@ -281,10 +284,13 @@ class PervasiveApp(object):
             params['optim']['lr'] = float(lr)
         if epochs is not None:
             params['optim']['epochs'] = int(epochs)
+        if 'data' not in params:
+            params['data'] = {}
         if batch_size is not None:
             params['data']['batch_size'] = int(batch_size)
         if epoch_size is not None:
             params['data']['epoch_size'] = int(epoch_size)
+
         # Set default values for these parameters.
         if 'max_val_size' not in params['data']:
             params['data']['max_val_size'] = None

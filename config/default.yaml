@@ -1,3 +1,5 @@
+cpu: false
+
 gpu_ids:
   - 0
 

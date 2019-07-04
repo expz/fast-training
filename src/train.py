@@ -135,6 +135,7 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
     """
     # For user friendly error messages, check these parameters exist.
     check_params(params, [
+        'cpu',
         'data.batch_size',
         'data.dir',
         'data.epoch_size',
@@ -166,7 +167,8 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
         pass
 
     # Configure GPU/CPU device settings.
-    gpu_ids = params['gpu_ids']
+    cpu = params['cpu']
+    gpu_ids = params['gpu_ids'] if not cpu else []
     world_size = len(gpu_ids) if len(gpu_ids) > 0 else 1
     distributed = world_size > 1
     if gpu_ids:
