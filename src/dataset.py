@@ -6,6 +6,12 @@ import torch.utils.data
 
 
 class DaskDataset(torch.utils.data.Dataset):
+    """
+    This represents a dataset store in a dask array. As such it can handle
+    datasets that are too big to fit into memory.
+
+    When queried for training examples, it returns torch tensors.
+    """
 
     def __init__(self, *arrays):
         # `is_empty` is a hack to please fastai Learner.summary().
@@ -15,6 +21,7 @@ class DaskDataset(torch.utils.data.Dataset):
 
     @classmethod
     def _torch_dtype(cls, dask_dtype):
+        """Converts a numpy datatype to a torch datatype."""
         if dask_dtype == np.float16:
             return torch.float16
         elif dask_dtype == np.float32:
@@ -30,11 +37,15 @@ class DaskDataset(torch.utils.data.Dataset):
                 f'Datatype {dask_dtype} not supported by DaskDataset.')
 
     def __getitem__(self, index):
+        """
+        Returns the example at index `index` for each array in this dataset.
+        """
         return tuple(
             torch.tensor(np.array(array[index]), dtype=self.dtypes[i])
             for i, array in enumerate(self.arrays))
 
     def __len__(self):
+        """Returns the number of examples in the array."""
         return self.arrays[0].shape[0] if self.arrays else 0
 
 
@@ -84,4 +95,5 @@ class H5Dataset(torch.utils.data.Dataset):
         return torch.tensor(np.array(self.data[indices]), dtype=self.dtype)
         
     def size(self, dim):
+        """Get the size of dimension `dim` of the dataset."""
         return self.data.shape[dim]
