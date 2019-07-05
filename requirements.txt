@@ -14,17 +14,16 @@ dask[array]==2.0.0
 docutils==0.14            # via botocore
 falcon==2.0.0
 gunicorn==19.9.0
-h5py==2.9.0
 idna==2.8                 # via requests
 jmespath==0.9.4           # via boto3, botocore
-numpy==1.16.4             # via dask, h5py, pytorch-pretrained-bert, torch
+numpy==1.16.4             # via dask, pytorch-pretrained-bert, torch
 python-dateutil==2.8.0    # via botocore
 pytorch-pretrained-bert==0.6.2
 pyyaml==5.1.1
 regex==2019.6.8           # via pytorch-pretrained-bert
 requests==2.22.0          # via pytorch-pretrained-bert
 s3transfer==0.2.1         # via boto3
-six==1.12.0               # via h5py, python-dateutil
+six==1.12.0               # via python-dateutil
 toolz==0.9.0              # via dask
 torch==1.1.0
 tqdm==4.32.2              # via pytorch-pretrained-bert

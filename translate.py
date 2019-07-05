@@ -4,9 +4,9 @@ import sys
 import torch
 
 from config import parse_config
-from dataloader import VocabData
 from evaluate import beam_search
 from pervasive import Pervasive
+from vocab import VocabData
 
 
 def translate(src_text, config, model_path):
@@ -24,7 +24,7 @@ def translate(src_text, config, model_path):
     ])
     src_data = src_data.to(device)
     print('Translating...this can take a minute...')
-    out_data = beam_search(model, src_data, 5, params['data']['max_length'])
+    out_data = beam_search(model, src_data, 1, params['data']['max_length'])
     out_text = tgt_vocab.to_text(out_data)[0]
     print(out_text)
 

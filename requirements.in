@@ -1,5 +1,4 @@
 dask[array]
-h5py
 falcon
 gunicorn
 PyYAML

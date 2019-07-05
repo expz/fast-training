@@ -17,9 +17,10 @@ import torch.nn.functional as F
 from torch.nn.parallel import DistributedDataParallel
 
 from bleu import bleu_score
-from dataloader import PervasiveDataLoader, VocabData
+from dataloader import PervasiveDataLoader
 from evaluate import beam_search
 from pervasive import Pervasive, PervasiveBert, PervasiveEmbedding
+from vocab import VocabData
 
 
 logger = logging.getLogger('fr2en')
