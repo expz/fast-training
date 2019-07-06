@@ -29,7 +29,7 @@ class DaskDataset(torch.utils.data.Dataset):
         elif dask_dtype == np.float64:
             return torch.float64
         elif dask_dtype == np.int32:
-            return torch.int32
+            return torch.int64  # Embedding layers require longs.
         elif dask_dtype == np.int64:
             return torch.int64
         else:
@@ -67,7 +67,7 @@ class H5Dataset(torch.utils.data.Dataset):
         if dtype_name == 'int64':
             self.dtype = torch.int64
         elif dtype_name == 'int32':
-            self.dtype = torch.int64  # Model seems to want Long's.
+            self.dtype = torch.int64  # Embedding layer wants longs.
         elif dtype_name == 'float64':
             self.dtype = torch.float64
         elif dtype_name == 'float32':

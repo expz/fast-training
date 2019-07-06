@@ -70,7 +70,7 @@ def parse_config(config,
         freeze = freeze if freeze is not None else False
         params['freeze'] = freeze
 
-    project_dir = os.path.dirname(os.path.abspath(__file__))
+    project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     if 'model_name' not in params:
         raise ValueError('Expected parameter "model_name" not supplied.')
 

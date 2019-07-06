@@ -8,6 +8,7 @@ from fastai.callbacks import LearnerCallback, SaveModelCallback
 from fastai.callbacks.tensorboard import LearnerTensorboardWriter
 from fastai.train import Learner
 from fastprogress.fastprogress import format_time
+from functools import partial
 import logging
 import os
 import pandas as pd
@@ -19,7 +20,9 @@ from torch.nn.parallel import DistributedDataParallel
 from bleu import bleu_score
 from dataloader import PervasiveDataLoader
 from evaluate import beam_search
-from pervasive import Pervasive, PervasiveBert, PervasiveEmbedding
+from pervasive import (
+    Pervasive, PervasiveBert, PervasiveEmbedding, PervasiveOriginal, dilate
+)
 from vocab import VocabData
 
 
@@ -83,12 +86,10 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
     ])
 
     model_name = params['model_name']
+
+    # Try to make the directory for saving models.
     model_dir = os.path.join(project_dir, 'model', model_name)
-    try:
-        # Try to make the directory for saving models.
-        os.makedirs(model_dir)
-    except FileExistsError:
-        pass
+    os.makedirs(model_dir, exist_ok=True)
 
     # Configure GPU/CPU device settings.
     cpu = params['cpu']
@@ -112,13 +113,7 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
 
     # Load vocabulary.
     vocab_path = os.path.join(params['data']['dir'], params['data']['vocab'])
-    if os.path.isfile(vocab_path):
-        # When using BERT, the source and target share a single vocabulary.
-        src_vocab = VocabData(vocab_path)
-        tgt_vocab = src_vocab
-    else:
-        src_vocab = VocabData(f'{vocab_path}.{params["src_lang"]}')
-        tgt_vocab = VocabData(f'{vocab_path}.{params["src_lang"]}')
+    vocab = VocabData(vocab_path)
 
     # Load data.
     src_l = params['data']['src']
@@ -126,8 +121,8 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
     loader = PervasiveDataLoader(
         os.path.join(params['data']['dir'], f'{src_l}.h5'),
         os.path.join(params['data']['dir'], f'{tgt_l}.h5'),
-        src_vocab,
-        tgt_vocab,
+        vocab,
+        vocab,
         params['data']['batch_size'] // world_size,
         params['data']['max_length'],
         epoch_size=params['data']['epoch_size'],
@@ -147,7 +142,7 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
                              'dropout to use pretrained embeddings.')
         model = PervasiveEmbedding(
             params['network']['block_sizes'],
-            tgt_vocab.bos,
+            vocab.bos,
             loader.max_length,
             loader.max_length,
             loader.datasets['train'].arrays[0].shape[2],
@@ -164,7 +159,23 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
     elif params['network']['type'] == 'pervasive-bert':
         model = PervasiveBert(
             params['network']['block_sizes'],
-            tgt_vocab.bos,
+            vocab.bos,
+            loader.max_length,
+            loader.max_length,
+            params['encoder']['embedding_dim'],
+            params['encoder']['embedding_dropout'],
+            params['network']['dropout'],
+            params['decoder']['prediction_dropout'],
+            params['network']['division_factor'],
+            params['network']['growth_rate'],
+            params['network']['bias'],
+            params['network']['efficient'])
+        loss_func = F.cross_entropy
+    elif params['network']['type'] == 'pervasive-original':
+        model = PervasiveOriginal(
+            params['network']['block_sizes'],
+            len(vocab),
+            vocab.bos,
             loader.max_length,
             loader.max_length,
             params['encoder']['embedding_dim'],
@@ -179,15 +190,14 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
     elif params['network']['type'] == 'pervasive':
         model = Pervasive(
             params['network']['block_sizes'],
-            len(src_vocab),
-            len(tgt_vocab),
-            tgt_vocab.bos,
+            len(vocab),
+            vocab.bos,
             loader.max_length,
             loader.max_length,
             params['encoder']['embedding_dim'],
+            params['encoder']['embedding_dim'],
             params['encoder']['embedding_dropout'],
             params['network']['dropout'],
-            params['decoder']['embedding_dropout'],
             params['decoder']['prediction_dropout'],
             params['network']['division_factor'],
             params['network']['growth_rate'],
@@ -207,13 +217,21 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
                      loader.loaders['valid'],
                      loader.loaders['valid'],
                      device=device)
+
+    # Create Learner with Adam optimizer.
     learn = Learner(data, model, loss_func=loss_func, model_dir=model_dir)
+    AdamP = partial(
+        torch.optim.Adam,
+        betas=(params['optim']['beta1'], params['optim']['beta2']))
+    learn.opt_func = AdamP
+    learn.wd = params['optim']['wd']
+
     return (
         learn, loader.loaders['train'].src_vocab,
         loader.loaders['train'].tgt_vocab)
 
 
-def restore(learn, model_fn):
+def restore(learn, model_fn, do_dilate=False):
     """
     Restores the weights of a model saved to `model_fn` to the model of
     the Learner `learn`.
@@ -227,6 +245,11 @@ def restore(learn, model_fn):
             # Turning off `strict` means it is okay for the saved model not
             # to have weights for all the parameters of the current model.
             learn.load(model_fn, strict=False)
+            if do_dilate:
+                model = learn.model
+                if isinstance(model, DistributedDataParallel):
+                    model = model.module
+                dilate(model.network)
         except FileNotFoundError:
             logger.error(f'The model file {learn.model_dir}/{model_fn}.pth '
                          'was not found!')
@@ -244,8 +267,8 @@ def train_worker(pindex,
                  project_dir,
                  params,
                  comm_file=None,
-                 checkpoint=None,
                  restore_fn=None,
+                 do_dilate=False,
                  queues=None):
     """
     Trains the model as specified by `params` on GPU `gpu_ids[pindex]`.
@@ -254,8 +277,6 @@ def train_worker(pindex,
 
     This is run in separate processes from the command line app, with
     one process per GPU.
-
-    Optionally save the model every `checkpoint` batches.
 
     Optionally load a saved model with filename `restore`.
     """
@@ -266,10 +287,13 @@ def train_worker(pindex,
     learn, _, _ = build_learner(params, project_dir, pindex, comm_file, queues)
 
     # Restore saved model if necessary.
-    epoch = restore(learn, restore_fn)
+    epoch = restore(learn, restore_fn, do_dilate)
+
+    learn.model.cuda(params['gpu_ids'][pindex])
 
     # Callbacks.
     logs_path = learn.path / 'logs'
+    os.makedirs(f'{logs_path}/{params["model_name"]}', exist_ok=True)
     ts = datetime.now().strftime('%Y%m%dT%H%M%S')
     csv_fn = f'logs/{params["model_name"]}/log-{params["model_name"]}-{ts}'
     tbwriter = LearnerTensorboardWriter(learn, logs_path, params['model_name'])
@@ -403,7 +427,7 @@ class BLEUScoreMetric(LearnerCallback):
         if not train:
             batch_size = last_input.size(0)
             src_data, tgt_data = last_input.split([self.Ts, self.Tt], dim=1)
-            out_data = beam_search(self.learn, src_data, self.beam_size,
+            out_data = beam_search(self.learn.model, src_data, self.beam_size,
                                    self.Tt - 1)
             assert (list(out_data.shape) == [batch_size, self.Tt - 1])
             bleu = 0.0

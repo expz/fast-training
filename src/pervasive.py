@@ -16,6 +16,7 @@ from pytorch_pretrained_bert import BertModel
 import torch
 from torch import nn
 import torch.nn.functional as F
+from torch.nn.parameter import Parameter
 import torch.utils.checkpoint as cp
 
 
@@ -31,6 +32,47 @@ class Aggregator(nn.Module):
 
     def forward(self, x):
         return x.max(dim=3)[0].permute(0, 2, 1)
+
+
+def dilate(network):
+    """
+    This function takes in a `PervasiveNetwork` with convolutions of size 3
+    and dilates them to size 5. It fills in the gaps of the newly created
+    5 x 5 filter by averaging neighboring cells.
+    """
+    for name, m in network.densenet.named_children():
+        if 'denseblock' in name:
+            for name2, m2 in m.named_children():
+                if 'denselayer' in name2:
+                    assert m2.conv2.kernel_size == 3
+                    m2.conv2.kernel_size = 5
+                    m2.conv2.padding = 2
+                    w = torch.Tensor(
+                        m2.conv2.in_channels,
+                        m2.conv2.out_channels // m2.conv2.groups, 5, 5)
+                    for i in range(3):
+                        for j in range(3):
+                            w[:, :, i * 2, j * 2] = \
+                                m2.conv2.weight.data[:, :, i, j]
+                            w[:, :, i + 1, j + 1] = \
+                                (m2.conv2.weight.data[:, :, i, j]
+                                    + m2.conv2.weight.data[:, :, 1, 1]) / 2
+                    for i, j in [(0, 1), (0, 3), (1, 4), (3, 4)]:
+                        w[:, :, i, j] = \
+                            (m2.conv2.weight.data[:, :, i, j - 1]
+                                + m2.conv2.weight.data[:, :, i, j + 1]) / 2
+                    for i, j in [(1, 0), (3, 0),  (4, 3), (4, 1)]:
+                        w[:, :, i, j] = \
+                            (m2.conv2.weight.data[:, :, i - 1, j]
+                                + m2.conv2.weight.data[:, :, i + 1, j]) / 2
+                    m2.conv2.weight = Parameter(w)
+                    m2.conv2.k = 5
+                    m2.conv2.register_buffer(
+                        'mask', torch.zeros((5, 5), dtype=torch.uint8))
+                    m2.conv2.mask[:, :, 3:, :] = 1
+                    m2.conv2.register_buffer(
+                        'zeros', torch.zeros(
+                            (5, 5), dtype=m2.conv2.weight.data.dtype))
 
 
 class MaskedConv2d(nn.Conv2d):
@@ -333,8 +375,7 @@ class PervasiveOriginal(nn.Module):
 
     def __init__(self,
                  block_sizes,
-                 src_vocab_sz,
-                 tgt_vocab_sz,
+                 vocab_sz,
                  bos,
                  Ts=51,
                  Tt=51,
@@ -353,16 +394,15 @@ class PervasiveOriginal(nn.Module):
         self.Tt = Tt
 
         self.emb_dropout = nn.Dropout(emb_dropout)
-        self.src_embedding = nn.Embedding(src_vocab_sz, emb_size)
-        self.tgt_embedding = nn.Embedding(tgt_vocab_sz, emb_size)
+        self.embedding = nn.Embedding(vocab_sz, emb_size)
 
         self.network = PervasiveNetwork(
             block_sizes, Ts, Tt, emb_size, conv_dropout, division_factor,
             growth_rate, bias, efficient)
 
         self.prediction_dropout = nn.Dropout(prediction_dropout)
-        self.prediction = nn.Linear(emb_size, tgt_vocab_sz)
-        self.prediction.weight = self.tgt_embedding.weight
+        self.prediction = nn.Linear(emb_size, vocab_sz)
+        self.prediction.weight = self.embedding.weight
 
     def init_weights(self):
         """
@@ -407,8 +447,8 @@ class PervasiveOriginal(nn.Module):
         Forward pass of `data` through the entire model.
         """
         # Embedding.
-        src_emb = self.emb_dropout(self.src_embedding(src_data))
-        tgt_emb = self.emb_dropout(self.tgt_embedding(tgt_data))
+        src_emb = self.emb_dropout(self.embedding(src_data))
+        tgt_emb = self.emb_dropout(self.embedding(tgt_data))
         src_grid = src_emb.unsqueeze(1).repeat(1, tgt_emb.shape[1], 1, 1)
         tgt_grid = tgt_emb.unsqueeze(2).repeat(1, 1, src_emb.shape[1], 1)
         X = torch.cat((src_grid, tgt_grid), dim=3)
@@ -490,9 +530,9 @@ class Pervasive(PervasiveOriginal):
         self.projection = nn.Sequential(OrderedDict([
             ('projection_dropout', nn.Dropout(emb_dropout)),
             ('projection', nn.Linear(initial_emb_size, emb_size)),
-            # ('projection_perm1', PermutationLayer(0, 2, 1)),
-            # ('projection_norm', nn.BatchNorm1d(emb_size)),
-            # ('projection_perm2', PermutationLayer(0, 2, 1)),
+            ('projection_perm1', PermutationLayer(0, 2, 1)),
+            ('projection_norm', nn.BatchNorm1d(emb_size)),
+            ('projection_perm2', PermutationLayer(0, 2, 1)),
             ('projection_relu', nn.ReLU(inplace=True)),
         ]))
 
@@ -501,11 +541,17 @@ class Pervasive(PervasiveOriginal):
             block_sizes, Ts, Tt, emb_size, conv_dropout, division_factor,
             growth_rate, bias, efficient)
 
+        # Unprojection layer.
+        self.unprojection = nn.Sequential(OrderedDict([
+            ('unprojection_dropout', nn.Dropout(emb_dropout)),
+            ('unprojection', nn.Linear(emb_size, initial_emb_size)),
+            ('unprojection_perm1', PermutationLayer(0, 2, 1)),
+            ('unprojection_norm', nn.BatchNorm1d(initial_emb_size)),
+            ('unprojection_perm2', PermutationLayer(0, 2, 1)),
+            ('unprojection_relu', nn.ReLU(inplace=True)),
+        ]))
+
         # Output layer.
-        self.unprojection_dropout = nn.Dropout(emb_dropout)
-        self.unprojection = nn.Linear(emb_size, initial_emb_size)
-        self.unprojection_norm = nn.BatchNorm1d(initial_emb_size)
-        self.unprojection_relu = nn.ReLU(inplace=True)
         self.prediction_dropout = nn.Dropout(prediction_dropout)
         self.prediction = \
             nn.Linear(initial_emb_size, vocab_sz)
@@ -519,22 +565,18 @@ class Pervasive(PervasiveOriginal):
         # Embedding with projection.
         src_emb = self.projection(self.embedding(src_data))
         tgt_emb = self.projection(self.embedding(tgt_data))
+
+        # Prepare grid where embedding dim becomes channels.
         src_grid = src_emb.unsqueeze(1).repeat(1, tgt_emb.shape[1], 1, 1)
         tgt_grid = tgt_emb.unsqueeze(2).repeat(1, 1, src_emb.shape[1], 1)
         X = torch.cat((src_grid, tgt_grid), dim=3)
-
-        # Embedding dim becomes channels.
         X = X.permute(0, 3, 1, 2)
 
         # Pass data through DenseNet.
         X = self.network(X)
 
         # Unprojection layer.
-        X = self.unprojection(self.unprojection_dropout(X))
-        X = X.permute(0, 2, 1)
-        X = self.unprojection_norm(X)
-        X = X.permute(0, 2, 1)
-        X = self.unprojection_relu(X)
+        X = self.unprojection(X)
 
         X = self.prediction(self.prediction_dropout(X))
         return X
@@ -574,10 +616,10 @@ class PervasiveBert(Pervasive):
         # Embed and project to a lower-dimensional embedding.
         self.projection = nn.Sequential(OrderedDict([
             ('projection_dropout', nn.Dropout(emb_dropout)),
-            ('projection', nn.Linear(self.embedding.embedding_dim, emb_size)),
-            # ('projection_perm1', PermutationLayer(0, 2, 1)),
-            # ('projection_norm', nn.BatchNorm1d(emb_size)),
-            # ('projection_perm2', PermutationLayer(0, 2, 1)),
+            ('projection', nn.Linear(bert_emb.embedding_dim, emb_size)),
+            ('projection_perm1', PermutationLayer(0, 2, 1)),
+            ('projection_norm', nn.BatchNorm1d(emb_size)),
+            ('projection_perm2', PermutationLayer(0, 2, 1)),
             ('projection_relu', nn.ReLU(inplace=True)),
         ]))
 
@@ -586,11 +628,17 @@ class PervasiveBert(Pervasive):
             block_sizes, Ts, Tt, emb_size, conv_dropout, division_factor,
             growth_rate, bias, efficient)
 
+        # Unprojection layer.
+        self.unprojection = nn.Sequential(OrderedDict([
+            ('unprojection_dropout', nn.Dropout(emb_dropout)),
+            ('unprojection', nn.Linear(emb_size, bert_emb.embedding_dim)),
+            ('unprojection_perm1', PermutationLayer(0, 2, 1)),
+            ('unprojection_norm', nn.BatchNorm1d(bert_emb.embedding_dim)),
+            ('unprojection_perm2', PermutationLayer(0, 2, 1)),
+            ('unprojection_relu', nn.ReLU(inplace=True)),
+        ]))
+
         # Output layer.
-        self.unprojection_dropout = nn.Dropout(emb_dropout)
-        self.unprojection = nn.Linear(emb_size, bert_emb.embedding_dim)
-        self.unprojection_norm = nn.BatchNorm1d(bert_emb.embedding_dim)
-        self.unprojection_relu = nn.ReLU(inplace=True)
         self.prediction_dropout = nn.Dropout(prediction_dropout)
         self.prediction = \
             nn.Linear(bert_emb.embedding_dim, bert_emb.num_embeddings)
@@ -611,7 +659,7 @@ class PervasiveEmbedding(Pervasive):
                  bos,
                  Ts=51,
                  Tt=51,
-                 input_size=768,
+                 initial_emb_size=768,
                  emb_size=128,
                  emb_dropout=0.2,
                  conv_dropout=0.2,
@@ -629,7 +677,10 @@ class PervasiveEmbedding(Pervasive):
         # Embed and project to a lower-dimensional embedding.
         self.projection = nn.Sequential(OrderedDict([
             ('projection_dropout', nn.Dropout(emb_dropout)),
-            ('projection', nn.Linear(input_size, emb_size)),
+            ('projection', nn.Linear(initial_emb_size, emb_size)),
+            ('projection_perm1', PermutationLayer(0, 2, 1)),
+            ('projection_norm', nn.BatchNorm1d(emb_size)),
+            ('projection_perm2', PermutationLayer(0, 2, 1)),
             ('projection_relu', nn.ReLU(inplace=True)),
         ]))
 
@@ -638,11 +689,15 @@ class PervasiveEmbedding(Pervasive):
             block_sizes, Ts, Tt, emb_size, conv_dropout,
             division_factor, growth_rate, bias, efficient)
 
-        # Output layer.
-        self.unprojection_dropout = nn.Dropout(emb_dropout)
-        self.unprojection = nn.Linear(emb_size, input_size)
-        self.unprojection_norm = nn.BatchNorm1d(input_size)
-        self.unprojection_relu = nn.ReLU(inplace=True)
+        # Unprojection layer.
+        self.unprojection = nn.Sequential(OrderedDict([
+            ('unprojection_dropout', nn.Dropout(emb_dropout)),
+            ('unprojection', nn.Linear(emb_size, initial_emb_size)),
+            ('unprojection_perm1', PermutationLayer(0, 2, 1)),
+            ('unprojection_norm', nn.BatchNorm1d(initial_emb_size)),
+            ('unprojection_perm2', PermutationLayer(0, 2, 1)),
+            ('unprojection_relu', nn.ReLU(inplace=True)),
+        ]))
 
     def forward(self, data):
         """
@@ -651,6 +706,9 @@ class PervasiveEmbedding(Pervasive):
         Tt = data.shape[1] - self.Ts
         src_data, tgt_data = data.split([self.Ts, Tt], dim=1)
         X = self._forward(src_data, tgt_data)
+
+        # No logits.
+
         # The target output does not have a BOS token, so it is one shorter
         # than the input. Drop the extraneous final token here.
         return X[:, :-1, :]
@@ -662,20 +720,18 @@ class PervasiveEmbedding(Pervasive):
         # Apply projection and form 2D grid of pairs of word embeddings.
         src_emb = self.projection(src_data)
         tgt_emb = self.projection(tgt_data)
+
+        # Run embeddings through the network.
         src_grid = src_emb.unsqueeze(1).repeat(1, tgt_emb.shape[1], 1, 1)
         tgt_grid = tgt_emb.unsqueeze(2).repeat(1, 1, src_emb.shape[1], 1)
         X = torch.cat((src_grid, tgt_grid), dim=3)
-
-        # Run embeddings through the network.
         X = X.permute(0, 3, 1, 2)
+
+        # DenseNet.
         X = self.network(X)
 
         # Unprojection layer.
-        X = self.unprojection(self.unprojection_dropout(X))
-        X = X.permute(0, 2, 1)
-        X = self.unprojection_norm(X)
-        X = X.permute(0, 2, 1)
-        X = self.unprojection_relu(X)
+        X = self.unprojection(X)
 
         return X
 
@@ -687,4 +743,5 @@ class PervasiveEmbedding(Pervasive):
         """
         Tt = data.shape[1] - self.Ts
         src_data, tgt_data = data.split([self.Ts, Tt], dim=1)
+        # No logits.
         return self._forward(src_data, tgt_data)

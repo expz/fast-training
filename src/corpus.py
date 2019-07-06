@@ -30,8 +30,11 @@ class LanguageCorpus:
     This is the most basic corpus and base class for other corpora.
 
     It uses a perl script from Moses to tokenize and `subword-nmt` to form
-    BPE vocabulary. It outputs sequences of integers indexing into the
-    vocabulary.
+    BPE vocabulary. These are standard tools for preprocessing, see e.g.
+    https://github.com/pytorch/fairseq/blob/master/examples/translation
+           /prepare-wmt14en2de.sh
+
+    It outputs sequences of integers indexing into the vocabulary.
 
     Moses is available at https://github.com/moses-smt/mosesdecoder.
     """
@@ -78,7 +81,7 @@ class LanguageCorpus:
         # Clean datasets for each language.
         for lang in langs:
             if not use_cache or not os.path.isfile(f'{out_path}.{lang}'):
-                logger.info(f'Cleaning {lang} dataset {dataset[lang]}.')
+                logger.info(f'Cleaning {lang} combined dataset.')
                 max_size = 100000000000 if max_size is None else max_size
                 os.system(f'head -n {max_size} tmp.{lang} '
                           f'| perl {normpunct_path} {lang} '
@@ -90,7 +93,7 @@ class LanguageCorpus:
 
         return out_path, list(langs)
 
-    def _tokenize(self, data_path, langs):
+    def _tokenize(self, data_path, langs, use_cache=False):
         """Tokenizes into BPE tokens using a perl script from Moses."""
         tokenizer_fn = remove_nonprint.split('/')[-1]
         tokenizer_path = os.path.join(self.data_dir, tokenizer_fn)
@@ -98,7 +101,7 @@ class LanguageCorpus:
             urllib.request.urlretrieve(tokenizer_url, filename=tokenizer_path)
         tok_path = os.path.join(self.data_dir, self.name, 'tokens')
         for lang in langs:
-            if not os.path.isfile(f'{tok_path}.{lang}'):
+            if not use_cache or not os.path.isfile(f'{tok_path}.{lang}'):
                 logger.info(f'Tokenizing dataset {data_path}.{lang}.')
                 os.system(
                     f'cat {data_path}.{lang} '
@@ -109,50 +112,133 @@ class LanguageCorpus:
                     f'Using previously tokenized dataset {data_path}.{lang}')
         return tok_path
 
-    def _encode(self, tok_path, langs, joint_vocab_size):
+    def _encode(self, tok_path, langs, joint_vocab_size, use_cache=False):
         """
         Tokenizes sentences using `subword-nmt` and converts them to sequences
         of integers.
         """
+        # Learn joint BPE.
         vocab_path = os.path.join(self.data_dir, self.name, 'vocab')
+        freqs_path = os.path.join(self.data_dir, self.name, 'freqs')
         codes_path = os.path.join(self.data_dir, self.name, 'bpe_codes')
-        learn_cmd = (
-            'subword-nmt learn-joint-bpe-and-vocab '
-            f'--input {tok_path}.{langs[0]} {tok_path}.{langs[1]}'
-            f'-s {joint_vocab_size} -o {codes_path} --write-vocabulary'
-            f'{vocab_path}.{langs[0]} {vocab_path}.{langs[1]}')
-        os.system(learn_cmd)
+        bpe_path = os.path.join(self.data_dir, self.name, 'bpe_toks')
+        if (not use_cache or not os.path.isfile(f'{freqs_path}.{langs[0]}')
+                or not os.path.isfile(codes_path)):
+            logging.info('Learning joint BPE.')
+            learn_cmd = (
+                'subword-nmt learn-joint-bpe-and-vocab '
+                f'--input {tok_path}.{langs[0]} {tok_path}.{langs[1]} '
+                f'-s {joint_vocab_size // 2} -o {codes_path} '
+                f'--write-vocabulary '
+                f'{freqs_path}.{langs[0]} {freqs_path}.{langs[1]}')
+            os.system(learn_cmd)
+        else:
+            logging.info('Using previously learned joint BPE.')
+
+        logging.info('Filtering out sentence pairs with invalid lengths.')
+
+        # Filter out sentence pairs with invalid lengths.
+        if (not use_cache
+                or not os.path.isfile(f'{tok_path}.filtered.{langs[0]}')
+                or not os.path.isfile(f'{tok_path}.filtered.{langs[1]}')):
+            with open(f'{tok_path}.{langs[0]}', 'r') as f, \
+                    open(f'{tok_path}.{langs[1]}', 'r') as g, \
+                    open(f'{tok_path}.filtered.{langs[0]}', 'w') as f_out, \
+                    open(f'{tok_path}.filtered.{langs[1]}', 'w') as g_out:
+                line1 = f.readline()
+                line2 = g.readline()
+                while line1 and line2:
+                    l1 = len(line1.split())
+                    l2 = len(line2.split())
+                    if ((not (l1 > 1.5 * l2 or l2 > 1.5 * l1)
+                            or (l1 <= 10 and l2 <= 10)) and l1 > 0 and l2 > 0):
+                        # readline() keeps the newline, write() does not add one
+                        f_out.write(line1)
+                        g_out.write(line2)
+                    line1 = f.readline()
+                    line2 = g.readline()
+
+        logging.info(f'Preparing joint vocabulary of size at most '
+                     f'{joint_vocab_size + 4}.')
+
+        # Add special tokens to frequencies (word plus num of occurrences).
+        freqs = ['[PAD] 1000', '[UNK] 1000', '[CLS] 1000', '[SEP] 1000']
+        with open(f'{freqs_path}.{langs[0]}', 'r') as f_freqs, \
+                open(f'{freqs_path}.{langs[1]}', 'r') as g_freqs:
+            line1 = f_freqs.readline()
+            line2 = g_freqs.readline()
+            seen = set()
+            while line1 and line2:
+                f1 = line1.split()
+                f2 = line2.split()
+                while len(f1) < 2 or f1[0] in seen:
+                    line1 = f_freqs.readline()
+                    f1 = line1.split()
+                while len(f2) < 2 or f2[0] in seen:
+                    line2 = g_freqs.readline()
+                    f2 = line2.split()
+                seen.add(f1[0])
+                seen.add(f2[0])
+                freqs.append(line1.strip())
+                freqs.append(line2.strip())
+                line1 = f_freqs.readline()
+                line2 = g_freqs.readline()
+        freqs = freqs[:joint_vocab_size + 4]
+        with open(f'{freqs_path}.txt', 'w') as f_freqs:
+            f_freqs.write('\n'.join(freqs))
+        wtoi = {
+            word.split()[0]: idx for idx, word in enumerate(freqs)
+        }
+
+        # Save vocabularly.
+        with open(f'{vocab_path}.txt', 'w') as f_vocab:
+            f_vocab.write('\n'.join(
+                word.split()[0] for idx, word in enumerate(freqs)))
+
         bpe_toks = {}
         for lang in langs:
-            with open(f'{vocab_path}.{lang}', 'r') as f_vocab:
-                vocab = f_vocab.read().split('\n')
-            vocab = ['[PAD]', '[UNK]', '[CLS]', '[SEP]'] + vocab
-            with open(f'{vocab_path}.{lang}', 'w') as f_vocab:
-                f_vocab.write('\n'.join(vocab))
-            wtoi = {word: idx for idx, word in enumerate(vocab)}
-            with open(f'{tok_path}.{lang}', 'r') as f_in:
-                apply_cmd = [
-                    'subword-nmt', 'apply-bpe', '-c', codes_path,
-                    '--vocabulary', f'{vocab_path}.{lang}',
-                    '--vocabulary-threshold', '50'
+            # Apply the BPE codes.
+            if not use_cache or not os.path.isfile(f'{bpe_path}.{lang}'):
+                logging.info(f'Applying BPE for language {lang}.')
+                with open(f'{tok_path}.filtered.{lang}', 'r') as f_in:
+                    apply_cmd = [
+                        'subword-nmt', 'apply-bpe', '-c', codes_path,
+                        '--vocabulary', f'{freqs_path}.txt',
+                    ]
+                    bpe_sents = subprocess.check_output(
+                        apply_cmd, stdin=f_in).decode('utf-8').split('\n')
+                bpe_toks[lang] = [
+                    ([wtoi['[CLS]']] + [wtoi[word]
+                        if word in wtoi else wtoi['[UNK]']
+                        for word in sent.split()]
+                        + [wtoi['[SEP]']]
+                        + [wtoi['[PAD]']] * (
+                            self.max_length - len(sent.split()) - 1)
+                        )[:self.max_length + 1]
+                    for sent in bpe_sents if sent.split()
                 ]
-                bpe_sents = subprocess.check_output(
-                    apply_cmd, stdin=f_in).decode('utf-8').split('\n')
-            bpe_toks[lang] = [
-                [wtoi[word] for word in sent.split()] for sent in bpe_sents
-            ]
+                with open(f'{bpe_path}.{lang}', 'wb') as f_bpe:
+                    pickle.dump(bpe_toks[lang], f_bpe)
+            else:
+                logging.info(f'Using previously calculated BPE tokenization '
+                             f'for {lang}.')
+                with open(f'{bpe_path}.{lang}', 'rb') as f_bpe:
+                    bpe_toks[lang] = pickle.load(f_bpe)
+
         return bpe_toks
 
     def _save(self, data, valid_size, dtype='int32'):
         """Saves the datasets to HDF5 files."""
         h5path = os.path.join(self.data_dir, self.name)
         for lang in data:
-            with h5py.File(f'{h5path}/{lang}.h5', 'w') as f:
+            h5file = f'{h5path}/{lang}.h5'
+            logging.info(f'Saving {lang} dataset to {h5file}')
+            with h5py.File(h5file, 'w') as f:
                 train_ds = f.create_dataset(
-                    'train', data=data[lang][:-valid_size])
+                    'train', data=data[lang][:-valid_size], dtype=np.int32)
                 train_ds.attrs['dtype'] = dtype
                 valid_ds = f.create_dataset(
-                    'valid', data=data[lang][-valid_size:])
+                    'valid', data=data[lang][-valid_size:], dtype=np.int32)
                 valid_ds.attrs['dtype'] = dtype
         return [f'{h5path}/{lang}.h5' for lang in data]
 
@@ -171,8 +257,8 @@ class LanguageCorpus:
                use_cache=False):
         """Creates train and validation datasets from files `datafiles`."""
         out_path, langs = self._clean(datafiles, max_size, use_cache)
-        tok_path = self._tokenize(out_path, langs)
-        bpe_toks = self._encode(tok_path, langs, joint_vocab_size)
+        tok_path = self._tokenize(out_path, langs, use_cache)
+        bpe_toks = self._encode(tok_path, langs, joint_vocab_size, use_cache)
         if self.shuffle:
             bpe_toks = self._shuffle(bpe_toks)
         return self._save(bpe_toks, valid_size, dtype='int32')
@@ -195,25 +281,18 @@ class BertCorpus(LanguageCorpus):
         self.bos, self.eos, self.pad = 101, 102, 0
         self.emb_size = 768
 
-    def _encode(self, out_path, langs):
+    def _encode(self, out_path, langs, use_cache=False):
         """
         Encodes sentences listed one per line in file `out_path` as sequences
         of integers indexing into the BERT multilingual vocabulary.
         """
         # Load saved tokenized data if we cached it during a previous run.
         toks_path = f'{out_path}.indices.pickle'
-        if os.path.isfile(toks_path):
+        if use_cache and os.path.isfile(toks_path):
             logging.info(f'Loading BPE tokenized data from {toks_path}.')
             try:
                 with open(toks_path, 'rb') as f:
-                    toks, lengths = pickle.load(f)
-                cnt = sum(1 for line in open(f'{out_path}.{langs[0]}', 'r'))
-                if cnt == len(toks[langs[0]]):
-                    return toks, lengths
-                else:
-                    logging.info(
-                        'Cache file of BPE tokenized data is out of date. '
-                        'Remaking.')
+                    return pickle.load(f)
             except Exception as e:
                 logging.warning(
                     f'Loading cached BPE tokenized data failed: {str(e)}.')
@@ -227,39 +306,27 @@ class BertCorpus(LanguageCorpus):
             'bert-base-multilingual-cased', do_lower_case=False)
 
         # Tokenize the sentences in the given files.
-        toks = {}
         lengths = {}
-        empty_lines = set()
+        ts = {}
         for lang in langs:
             with open(f'{out_path}.{lang}', 'r') as f:
                 logging.info(f'Converting {lang} text to BPE token indices.')
-                ts = [
+                ts[lang] = [
                     tokenizer.convert_tokens_to_ids(
                         tokenizer.tokenize(sent))[:self.max_length]
                     for sent in f
                 ]
-                lengths[lang] = [len(sent) for sent in ts]
-                empty_lines.update(
-                    [i for i, ll in enumerate(lengths[lang]) if ll == 0])
+                lengths[lang] = [len(sent) for sent in ts if sent]
 
-                # Vectors will have length `max_len + 1` to account for BOS.
-                max_len = max(lengths[lang])
-
-                logging.info(f'Adding BOS, EOS and PAD tokens for {lang}.')
-                toks[lang] = [
-                    ([self.bos] + sent + [self.eos]
-                        + [self.pad] * (max_len - len(sent) - 1))[:max_len + 1]
-                    for sent in ts
-                ]
-
-        # Remove pairs of sentences with at least one empty sentence.
+        # Vectors will have length `max_len + 1` to account for BOS.
+        max_len = max([ll for lang in langs for ll in lengths[lang]])
+        toks = {}
         for lang in langs:
+            logging.info(f'Adding BOS, EOS and PAD tokens for {lang}.')
             toks[lang] = [
-                sent
-                for i, sent in enumerate(toks[lang]) if i not in empty_lines
-            ]
-            lengths[lang] = [
-                l for i, l in enumerate(lengths[lang]) if i not in empty_lines
+                ([self.bos] + sent + [self.eos]
+                    + [self.pad] * (max_len - len(sent) - 1))[:max_len + 1]
+                for sent in ts[lang] if sent
             ]
 
         # Save vocabulary to file. (It will be called `vocab.txt`.)
@@ -337,18 +404,17 @@ class LowResolutionCorpus(BertCorpus):
         The indices of discarded tokens agree across languages.
         """
         max_len = len(toks[toks.keys()[0]][0])
-        n = math.floor(max_len * p)
+        n = math.ceil(max_len * p)
         new_toks = {}
         new_lens = {}
-        for lang in toks:
-            new_toks[lang] = []
-            new_lens[lang] = []
-            for sent in toks[lang]:
-                indices = list(range(1, max_len))
-                random.shuffle(indices)
-                indices = sorted(indices[:n])
-                # TODO: Fix me.
-                new_toks[lang].append([sent[i] for i in indices])
+        for sent1, l1, sent2, l2 in zip(toks[langs[0]], lens[langs[0]],
+                toks[langs[1]], lens[langs[1]]):
+            indices = list(range(1, ll))
+            random.shuffle(indices)
+            indices = [i + 1 for i in indices[:n]]
+            indices.sort()
+            # TODO: Fix me.
+            new_toks[lang].append([sent[i] for i in indices])
         return new_toks, new_lens
 
     def create(self, datafiles, p=0.5, valid_size=0, shuffle=True,
@@ -360,10 +426,7 @@ class LowResolutionCorpus(BertCorpus):
         out_path, langs = self._clean(datafiles, max_size, use_cache)
         toks, lens = self._encode(out_path, langs)
         if self.shuffle:
-            for lang in toks:
-                toks_lens = list(zip(toks[lang], lens[lang]))
-                random.shuffle(toks_lens)
-                toks[lang], lens[lang] = zip(*toks_lens)
+            self._shuffle_with_lens(toks, lens)
         toks, lens = self._subsample(toks, lens)
         return self._save_with_lens(toks, lens, valid_size, dtype='int32')
 
@@ -448,13 +511,15 @@ class EmbeddingCorpus(BertCorpus):
             always return an array with the same shape as the calling array's
             `chunksize`.
             """
-            emb = np.array(bert_emb(torch.LongTensor(x)), dtype=np.int32)
+            emb = np.array(bert_emb(torch.LongTensor(x)).data, dtype=np.float32)
             if x.shape[0] < chunk_size:
+                # This is a technical step to prevent returning too few rows.
                 dims = (chunk_size - x.shape[0], max_length, self.emb_size)
-                return np.concatenate((emb, np.zeros(dims, dtype=np.int32)))
+                return np.concatenate((emb, np.zeros(dims, dtype=np.float32)))
             return emb
 
         bert_model = BertModel.from_pretrained('bert-base-multilingual-cased')
+        bert_model.eval()
         bert_emb = bert_model.embeddings.word_embeddings
         embs = {}
         chunk_size = 1024
@@ -469,12 +534,12 @@ class EmbeddingCorpus(BertCorpus):
                 chunks=(chunk_size, max_length, self.emb_size),
                 dtype=np.float32,
                 new_axis=[2])
-        self.bos_emb = \
-            np.array(bert_emb(torch.tensor([self.bos]))[0], dtype=np.float32)
-        self.eos_emb = \
-            np.array(bert_emb(torch.tensor([self.eos]))[0], dtype=np.float32)
-        self.pad_emb = \
-            np.array(bert_emb(torch.tensor([self.pad]))[0], dtype=np.float32)
+        self.bos_emb = np.array(
+            bert_emb(torch.tensor([self.bos])).data[0], dtype=np.float32)
+        self.eos_emb = np.array(
+            bert_emb(torch.tensor([self.eos])).data[0], dtype=np.float32)
+        self.pad_emb = np.array(
+            bert_emb(torch.tensor([self.pad])).data[0], dtype=np.float32)
         return embs
 
     def _save(self, embs, valid_size):
@@ -591,7 +656,7 @@ class LowResolutionEmbeddingCorpus(EmbeddingCorpus):
             logger.info(f'Saving HDF5 file for language {lang}.')
             h5file = f'{h5path}/{lang}.h5'
             h5files.append(h5file)
-            print(h5file)
+            logging.info(f'Saving {lang} dataset to {h5file}')
             with h5py.File(h5file, 'w') as f_out:
                 # Use `store()`. `to_hdf5` produces empty fie for some reason.
                 train = avg_embs[lang][:-valid_size]

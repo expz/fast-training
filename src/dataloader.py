@@ -106,11 +106,10 @@ class DistributedSubSampler(DistributedSampler, SubSampler):
 class PervasiveDataLoader(object):
     """
     This data loader assumes that the data is stored in two HDF5 files
-    both containing datasets named 'train', 'val' and 'test'.
+    both containing datasets named 'train' and 'valid'.
 
-    It encapsulates three Pytorch `TensorDataset` objects for training,
-    validation and testing. It also contains three `DataLoader` objects,
-    one for each dataset.
+    It encapsulates two `DaskDataset` objects for training and validation.
+    It also contains two `DataLoader` objects, one for each dataset.
 
     Adapted from
     https://github.com/elbayadm/attn2d/blob/master/nmt/loader/dataloader.py
