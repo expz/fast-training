@@ -141,11 +141,11 @@ class PervasiveDataLoader(object):
         self.datasets = {}
         self.loaders = {}
         for dsname in ['train', 'valid']:
-            src = H5Dataset(src_h5, dsname).data[:, :max_length + 1]
+            src = H5Dataset(src_h5, dsname).data[:, :max_length]
             tgt = H5Dataset(tgt_h5, dsname).data[:, :max_length + 1]
             self.max_length = \
-                min(self.max_length + 1, src.shape[1], tgt.shape[1])
-            srctgt = dask.array.concatenate((src, tgt), axis=1)
+                min(self.max_length + 1, src.shape[1], tgt[:,:-1].shape[1])
+            srctgt = dask.array.concatenate((src, tgt[:,:-1]), axis=1)
 
             # Do not include BOS tokens in target output.
             tgt2 = tgt[:, 1:]

@@ -437,9 +437,7 @@ class PervasiveOriginal(nn.Module):
         src_data, tgt_data = data.split([self.Ts, Tt], dim=1)
         X = self._forward(src_data, tgt_data)
 
-        # The target output does not have a BOS token, so it is one shorter
-        # than the input. Drop the extraneous final token here.
-        logits = F.log_softmax(X, dim=2)[:, :-1]
+        logits = F.log_softmax(X, dim=2)
         return logits.permute(0, 2, 1)
 
     def _forward(self, src_data, tgt_data):
