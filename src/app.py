@@ -11,6 +11,8 @@ import sys
 from wsgiref import simple_server
 
 logger = logging.getLogger(__name__)
+logger.addHandler(logging.StreamHandler())
+logger.setLevel(logging.DEBUG)
 
 
 api = falcon.API()

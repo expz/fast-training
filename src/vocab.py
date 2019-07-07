@@ -18,6 +18,7 @@ class VocabData(object):
         (' &apos; ', "'"),
         ('&apos; ', "'"),
         (' &apos;', "'"),
+        ('&quot;', '"'),
         (' @-@ ', '-'),
         (' .', '.'),
         (' ,', ','),
@@ -31,6 +32,7 @@ class VocabData(object):
     ]
     enc_replacements = [
         ("'", ' &apos; '),
+        ('"', ' &quot; '),
         ('-', ' @-@ '),
         ('.', ' . '),
         (',', ' , '),
@@ -100,7 +102,7 @@ class VocabData(object):
             s = s.replace(x, y)
         return s
 
-    def to_ints(self, texts, max_length):
+    def to_ints(self, texts, max_length=None):
         """
         Convert the sentences in `texts` to lists of integers indexing into
         this vocabulary.
@@ -109,12 +111,14 @@ class VocabData(object):
         """
         if isinstance(texts[0], list):
             return [self.to_ints(t) for t in texts]
-        for x, y in self.enc_replacements:
-            texts = texts.replace(x, y)
-        ids = [
+        # for x, y in self.enc_replacements:
+        #     texts = texts.replace(x, y)
+
+        ids = [self.bos] + [
             self.word_to_idx[word] if word in self.word_to_idx else self.unk
             for word in texts.split()
-        ]
-        ids = [self.bos] + ids + [self.eos]
-        ids = ids + [self.pad] * (max_length - len(ids))
-        return ids[:max_length]
+        ] + [self.eos]
+        if max_length is not None:
+            ids = ids + [self.pad] * (max_length - len(ids))
+            ids = ids[:max_length]
+        return ids
