@@ -17,7 +17,7 @@ from corpus import (
     LanguageCorpus, BertCorpus, EmbeddingCorpus,
     LowResolutionEmbeddingCorpus)
 from evaluate import beam_search
-from train import build_learner, train_worker
+from train import build_learner, train_worker, restore
 
 
 logger = logging.getLogger('fr2en')
@@ -241,22 +241,6 @@ class PervasiveApp(object):
     def __init__(self):
         self.prepare_data = PrepareData()
 
-    def _restore(self, learn, filename):
-        """
-        Load the model saved at `filename` if it exists.
-        """
-        if filename is not None:
-            try:
-                # Remove extension if provided to match `load()`'s expectation.
-                if filename[-4:] == '.pth':
-                    filename = filename[:-4]
-                learn.load(filename, purge=False)
-                print(f'Loaded model {filename}.')
-            except FileNotFoundError:
-                print(f'The model file {learn.model_dir}/{filename}.pth '
-                      'was not found!')
-                return
-
     def train(self,
               config,
               device_ids=None,
@@ -288,17 +272,6 @@ class PervasiveApp(object):
         os.environ['CUDA_VISIBLE_DEVICES'] = '0,1,2,3,4,5,6,7'
         m = multiprocessing.Manager()
         nprocs = max(1, len(params['gpu_ids']))
-        if nprocs > 1:
-            logger.info("""
-
-==================================================================
-
-Training on multiple GPUs may cause spurious error messages at the
-beginning even though the training works fine!
-
-==================================================================
-
-""")
         qs = [m.Queue() for _ in range(nprocs)]
         torch.multiprocessing.spawn(train_worker,
                                     args=(project_dir, params, comm_file,
@@ -306,7 +279,7 @@ beginning even though the training works fine!
                                     nprocs=nprocs,
                                     join=True)
 
-    def example(self, config, gpu_id=0, restore=None, batch=None):
+    def example(self, config, gpu_id=0, model=None, batch=None):
         """
         Print a list of `batch` many example translations. This function
         requires the `restore` argument to be most useful. `restore` should be
@@ -315,7 +288,7 @@ beginning even though the training works fine!
         """
         params, project_dir = parse_config(config, [gpu_id], batch_size=batch)
         learn, src_vocab, tgt_vocab = build_learner(params, project_dir)
-        self._restore(learn, restore)
+        restore(learn, model)
         batch, tgt = next(iter(learn.data.valid_dl))
         src_data, tgt_data = \
             batch.split([learn.model.Ts, learn.model.Tt], dim=1)
