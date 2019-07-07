@@ -12,15 +12,22 @@ import torch
 import urllib
 
 
-normalize_punct = (
-    'https://raw.githubusercontent.com/moses-smt/mosesdecoder/master'
-    '/scripts/tokenizer/normalize-punctuation.perl')
-remove_nonprint = (
-    'https://raw.githubusercontent.com/moses-smt/mosesdecoder/master'
-    '/scripts/tokenizer/remove-non-printing-char.perl')
+nonbreaking_url = (
+    'https://raw.githubusercontent.com/moses-smt/mosesdecoder'
+    '/ef028446f3640e007215b4576a4dc52a9c9de6db/scripts/share'
+    '/nonbreaking_prefixes/nonbreaking_prefix')
+normalize_punct_url = (
+    'https://raw.githubusercontent.com/moses-smt/mosesdecoder'
+    '/ef028446f3640e007215b4576a4dc52a9c9de6db/scripts/tokenizer'
+    '/normalize-punctuation.perl')
+remove_nonprint_url = (
+    'https://raw.githubusercontent.com/moses-smt/mosesdecoder'
+    '/ef028446f3640e007215b4576a4dc52a9c9de6db/scripts/tokenizer'
+    '/remove-non-printing-char.perl')
 tokenizer_url = (
-    'https://raw.githubusercontent.com/moses-smt/mosesdecoder/master'
-    '/scripts/tokenizer/tokenizer.perl')
+    'https://raw.githubusercontent.com/moses-smt/mosesdecoder'
+    '/ef028446f3640e007215b4576a4dc52a9c9de6db/scripts/tokenizer'
+    '/tokenizer.perl')
 
 logger = logging.getLogger('fr2en')
 
@@ -41,6 +48,9 @@ class LanguageCorpus:
 
     data_dir = os.path.join(
         os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data')
+    moses_dir = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        'data', 'moses')
 
     def __init__(self,
                  name,
@@ -50,6 +60,7 @@ class LanguageCorpus:
         self.name = name
         self.shuffle = shuffle
         self.max_length = max_length
+        os.makedirs(os.path.join(self.moses_dir, 'tokenizer'), exist_ok=True)
 
     def _clean(self, datafiles, max_size=None, use_cache=False):
         """
@@ -57,17 +68,19 @@ class LanguageCorpus:
         punctuation and remove non-printable characters.
         """
         # Download datafiles.
-        normpunct_fn = normalize_punct.split('/')[-1]
-        normpunct_path = os.path.join(self.data_dir, normpunct_fn)
-        remnon_fn = remove_nonprint.split('/')[-1]
-        remnon_path = os.path.join(self.data_dir, remnon_fn)
+        normpunct_fn = normalize_punct_url.split('/')[-1]
+        normpunct_path = os.path.join(self.moses_dir, 'tokenizer', normpunct_fn)
+        remnon_fn = remove_nonprint_url.split('/')[-1]
+        remnon_path = os.path.join(self.moses_dir, 'tokenizer', remnon_fn)
         if not os.path.isfile(normpunct_path):
-            urllib.request.urlretrieve(normalize_punct, filename=normpunct_path)
+            urllib.request.urlretrieve(
+                normalize_punct_url, filename=normpunct_path)
         if not os.path.isfile(remnon_path):
-            urllib.request.urlretrieve(remove_nonprint, filename=remnon_path)
+            urllib.request.urlretrieve(
+                remove_nonprint_url, filename=remnon_path)
 
         # Prepare an output directory.
-        out_path = os.path.join(self.data_dir, self.name, 'train.tok')
+        out_path = os.path.join(self.data_dir, self.name, 'cleaned')
         os.makedirs(os.path.join(self.data_dir, self.name), exist_ok=True)
 
         # Concatenate datasets for each language.
@@ -95,10 +108,20 @@ class LanguageCorpus:
 
     def _tokenize(self, data_path, langs, use_cache=False):
         """Tokenizes into BPE tokens using a perl script from Moses."""
-        tokenizer_fn = remove_nonprint.split('/')[-1]
-        tokenizer_path = os.path.join(self.data_dir, tokenizer_fn)
+        tokenizer_fn = tokenizer_url.split('/')[-1]
+        tokenizer_path = os.path.join(self.moses_dir, 'tokenizer', tokenizer_fn)
         if not os.path.isfile(tokenizer_path):
             urllib.request.urlretrieve(tokenizer_url, filename=tokenizer_path)
+        nonbreaking_dir = \
+            os.path.join(self.moses_dir, 'share', 'nonbreaking_prefixes')
+        os.makedirs(nonbreaking_dir, exist_ok=True)
+        nonbreaking_fn = nonbreaking_url.split('/')[-1]
+        nonbreaking_path = os.path.join(nonbreaking_dir, nonbreaking_fn)
+        for lang in langs:
+            if not os.path.isfile(f'{nonbreaking_path}.{lang}'):
+                urllib.request.urlretrieve(
+                    f'{nonbreaking_url}.{lang}',
+                    filename=f'{nonbreaking_path}.{lang}')
         tok_path = os.path.join(self.data_dir, self.name, 'tokens')
         for lang in langs:
             if not use_cache or not os.path.isfile(f'{tok_path}.{lang}'):
@@ -112,29 +135,7 @@ class LanguageCorpus:
                     f'Using previously tokenized dataset {data_path}.{lang}')
         return tok_path
 
-    def _encode(self, tok_path, langs, joint_vocab_size, use_cache=False):
-        """
-        Tokenizes sentences using `subword-nmt` and converts them to sequences
-        of integers.
-        """
-        # Learn joint BPE.
-        vocab_path = os.path.join(self.data_dir, self.name, 'vocab')
-        freqs_path = os.path.join(self.data_dir, self.name, 'freqs')
-        codes_path = os.path.join(self.data_dir, self.name, 'bpe_codes')
-        bpe_path = os.path.join(self.data_dir, self.name, 'bpe_toks')
-        if (not use_cache or not os.path.isfile(f'{freqs_path}.{langs[0]}')
-                or not os.path.isfile(codes_path)):
-            logging.info('Learning joint BPE.')
-            learn_cmd = (
-                'subword-nmt learn-joint-bpe-and-vocab '
-                f'--input {tok_path}.{langs[0]} {tok_path}.{langs[1]} '
-                f'-s {joint_vocab_size // 2} -o {codes_path} '
-                f'--write-vocabulary '
-                f'{freqs_path}.{langs[0]} {freqs_path}.{langs[1]}')
-            os.system(learn_cmd)
-        else:
-            logging.info('Using previously learned joint BPE.')
-
+    def _filter_sents(self, tok_path, langs, use_cache=False):
         logging.info('Filtering out sentence pairs with invalid lengths.')
 
         # Filter out sentence pairs with invalid lengths.
@@ -158,8 +159,33 @@ class LanguageCorpus:
                     line1 = f.readline()
                     line2 = g.readline()
 
+    def _encode(self, tok_path, langs, joint_vocab_size, use_cache=False):
+        """
+        Tokenizes sentences using `subword-nmt` and converts them to sequences
+        of integers.
+        """
+        # Learn joint BPE.
+        vocab_path = os.path.join(self.data_dir, self.name, 'vocab')
+        freqs_path = os.path.join(self.data_dir, self.name, 'freqs')
+        codes_path = os.path.join(self.data_dir, self.name, 'bpe_codes')
+        bpe_path = os.path.join(self.data_dir, self.name, 'int_toks')
+        if (not use_cache or not os.path.isfile(f'{freqs_path}.{langs[0]}')
+                or not os.path.isfile(codes_path)):
+            logging.info('Learning joint BPE.')
+            learn_cmd = (
+                'subword-nmt learn-joint-bpe-and-vocab '
+                f'--input {tok_path}.{langs[0]} {tok_path}.{langs[1]} '
+                f'-s {joint_vocab_size // 2} -o {codes_path} '
+                f'--write-vocabulary '
+                f'{freqs_path}.{langs[0]} {freqs_path}.{langs[1]}')
+            os.system(learn_cmd)
+        else:
+            logging.info('Using previously learned joint BPE.')
+
         logging.info(f'Preparing joint vocabulary of size at most '
                      f'{joint_vocab_size + 4}.')
+
+        self._filter_sents(tok_path, langs, use_cache)
 
         # Add special tokens to frequencies (word plus num of occurrences).
         freqs = ['[PAD] 1000', '[UNK] 1000', '[CLS] 1000', '[SEP] 1000']
@@ -281,21 +307,23 @@ class BertCorpus(LanguageCorpus):
         self.bos, self.eos, self.pad = 101, 102, 0
         self.emb_size = 768
 
-    def _encode(self, out_path, langs, use_cache=False):
+    def _encode(self, raw_text_path, langs, use_cache=False):
         """
-        Encodes sentences listed one per line in file `out_path` as sequences
+        Encodes sentences listed one per line in file `raw_text_path` as seqs
         of integers indexing into the BERT multilingual vocabulary.
         """
+        self._filter_sents(raw_text_path, langs, use_cache)
+
         # Load saved tokenized data if we cached it during a previous run.
-        toks_path = f'{out_path}.indices.pickle'
-        if use_cache and os.path.isfile(toks_path):
-            logging.info(f'Loading BPE tokenized data from {toks_path}.')
+        int_tok_path = f'int_tok.pickle'
+        if use_cache and os.path.isfile(int_tok_path):
+            logging.info(f'Loading BPE tokenized data from {int_tok_path}.')
             try:
-                with open(toks_path, 'rb') as f:
+                with open(int_tok_path, 'rb') as f:
                     return pickle.load(f)
             except Exception as e:
                 logging.warning(
-                    f'Loading cached BPE tokenized data failed: {str(e)}.')
+                    f'Loading cached BPE tokenized int data failed: {str(e)}.')
 
         # Load Bert tokenizer.
         logging.info(f'Encoding data as BPE token indices.')
@@ -309,14 +337,14 @@ class BertCorpus(LanguageCorpus):
         lengths = {}
         ts = {}
         for lang in langs:
-            with open(f'{out_path}.{lang}', 'r') as f:
+            with open(f'{raw_text_path}.filtered.{lang}', 'r') as f:
                 logging.info(f'Converting {lang} text to BPE token indices.')
                 ts[lang] = [
                     tokenizer.convert_tokens_to_ids(
                         tokenizer.tokenize(sent))[:self.max_length]
                     for sent in f
                 ]
-                lengths[lang] = [len(sent) for sent in ts if sent]
+                lengths[lang] = [len(sent) for sent in ts[lang]]
 
         # Vectors will have length `max_len + 1` to account for BOS.
         max_len = max([ll for lang in langs for ll in lengths[lang]])
@@ -326,7 +354,7 @@ class BertCorpus(LanguageCorpus):
             toks[lang] = [
                 ([self.bos] + sent + [self.eos]
                     + [self.pad] * (max_len - len(sent) - 1))[:max_len + 1]
-                for sent in ts[lang] if sent
+                for sent in ts[lang]
             ]
 
         # Save vocabulary to file. (It will be called `vocab.txt`.)
@@ -334,8 +362,8 @@ class BertCorpus(LanguageCorpus):
         tokenizer.save_vocabulary(vocab_dir)
 
         # Save BPE tokenized data so we do not have to recompute if we rerun.
-        with open(toks_path, 'wb') as f:
-            logging.info(f'Saving BPE tokenized data to {toks_path}.')
+        with open(int_tok_path, 'wb') as f:
+            logging.info(f'Saving BPE tokenized data to {int_tok_path}.')
             pickle.dump((toks, lengths), f)
         return toks, lengths
 
