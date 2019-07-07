@@ -27,13 +27,11 @@ network:
   dropout: 0.2
   efficient: true
   growth_rate: 32
-  aggregator: max
 
 optim: 
   seed: 1
-  lr: 0.001
+  lr: 0.005
   epochs: 35
-  solver: adam
-  alpha: 0.9
-  beta: .999
-  epsilon: 1e-8
+  beta1: 0.9
+  beta2: 0.999
+  wd: 0.001

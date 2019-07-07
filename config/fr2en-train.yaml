@@ -1,9 +1,13 @@
 model_name: fr2en 
 default_config : config/default.yaml
 
-cpu: true
+cpu: false
+
+gpu_ids:
+  - 0
 
 network:
+  efficient: false
   type: pervasive-original
   block_sizes:
     - 6
@@ -13,14 +17,17 @@ data:
   src: fr
   tgt: en
   dir: data/subword_nmt_fr_en
-  batch_size: 16
-  epoch_size: 16384
+  batch_size: 48
+  epoch_size: 144000
   loader: standard
-  max_val_size: 256
-  max_length: 25
+  max_val_size: 480
+  max_length: 80
   vocab: vocab.txt
 
 optim: 
   seed: 3
-  lr: 0.002
+  lr: 0.01
   epochs: 20
+  beta1: 0.9
+  beta2: 0.999
+  wd: 0.001

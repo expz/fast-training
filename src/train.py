@@ -67,7 +67,6 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
         'data.dir',
         'data.epoch_size',
         'data.max_length',
-        'data.max_test_size',
         'data.max_val_size',
         'data.src',
         'data.tgt',
