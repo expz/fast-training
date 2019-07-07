@@ -5,7 +5,7 @@ import torch
 
 from config import parse_config
 from evaluate import beam_search
-from pervasive import Pervasive
+from pervasive import PervasiveOriginal
 from vocab import VocabData
 
 
@@ -63,14 +63,12 @@ def build_model(params, project_dir):
 
     # Define neural network.
     # Max length is 1 more than setting to account for BOS.
-    bert_embedding_size = 768
-    model = Pervasive(
+    model = PervasiveOriginal(
         params['network']['block_sizes'],
         len(tgt_vocab),
         tgt_vocab.bos,
         params['data']['max_length'] + 1,
         params['data']['max_length'] + 1,
-        bert_embedding_size,
         params['encoder']['embedding_dim'],
         params['encoder']['embedding_dropout'],
         params['network']['dropout'],
