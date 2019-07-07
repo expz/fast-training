@@ -4,7 +4,6 @@
 #
 #    pip-compile requirements.in
 #
---find-links https://download.pytorch.org/whl/nightly/cu100/torch_nightly.html
 
 boto3==1.9.183            # via pytorch-pretrained-bert
 botocore==1.12.183        # via boto3, s3transfer

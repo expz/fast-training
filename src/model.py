@@ -4,13 +4,11 @@ Based on
 """
 
 import functools
-import io
 import logging
 import os
 from subprocess import Popen, PIPE
 import time
 import torch
-from typing import List, Tuple
 
 from const import CONFIG_FILE, MODEL_FILE, TOKENIZER, MAX_LENGTH, BEAM_WIDTH
 from config import parse_config

@@ -7,7 +7,7 @@ script_dir="$(dirname "$(readlink -f "$BASH_SOURCE")")"
 
 . "$script_dir/util.sh"
 
-version='v0.2.0'
+version='v0.9.0'
 if [ -n "$GCP_PROJECT" ]; then
   image_name="gcr.io/$GCP_PROJECT/app"
 else
@@ -21,7 +21,7 @@ if [ -n "$GCP_PROJECT" ]; then
     docker push "$image_name"
 
     if prompt "(Re)deploy docker image to Google Run (y/n)? " ; then
-      gcloud beta run deploy --image "$image_name" --project "$GCP_PROJECT"
+      gcloud beta run deploy --platform managed --image "$image_name" --project "$GCP_PROJECT"
     fi
   fi
 else

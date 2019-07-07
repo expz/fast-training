@@ -69,7 +69,7 @@ class Root:
 api.add_route('/api/translate/fren', TranslateFREN())
 api.add_route('/health', Health())
 api.add_route('/', Root())
-api.add_static_route('/', os.path.join(const.APP_DIR, 'www'))
+api.add_static_route('/', os.path.join(const.APP_DIR, 'src', 'www'))
 
 if 'pytest' not in sys.modules:
     logger.info('warming up model')

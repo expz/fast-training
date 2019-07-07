@@ -1,14 +1,13 @@
 import os
 
-APP_DIR = os.path.dirname(os.path.abspath(__file__))
+APP_DIR = os.getenv('APP_DIR', os.getcwd())
 
-PROJECT_DIR = os.path.dirname(APP_DIR)
+CONFIG_FILE = os.path.join(APP_DIR, 'config', 'fr2en.yaml')
 
-CONFIG_FILE = os.path.join(PROJECT_DIR, 'config', 'fr2en.yaml')
+MODEL_FILE = os.path.join(APP_DIR, 'model', 'fr2en.pth')
+MODEL_FILE = os.getenv('MODEL_FILE', MODEL_FILE)
 
-MODEL_FILE = os.path.join(PROJECT_DIR, 'model', 'fr2en.pth')
-
-TOKENIZER = os.path.join(PROJECT_DIR, 'data', 'moses', 'tokenizer', 'tokenizer.perl')
+TOKENIZER = os.path.join(APP_DIR, 'data', 'moses', 'tokenizer', 'tokenizer.perl')
 
 MAX_LENGTH = int(os.getenv('MAX_LENGTH', 50))
 

@@ -1,0 +1,15 @@
+#!/bin/bash
+
+set -e
+
+model_fn="$(basename "$MODEL_FILE")"
+mkdir -p "$(dirname "$MODEL_FILE")"
+curl -o "$MODEL_FILE" \
+    "https://www.googleapis.com/storage/v1/b/insight-pier-models/o/${model_fn}?alt=media"
+
+vocab_fn="$(basename "$VOCAB_FILE")"
+mkdir -p "$(dirname "$VOCAB_FILE")"
+curl -o "$VOCAB_FILE" \
+    "https://www.googleapis.com/storage/v1/b/insight-pier-models/o/${vocab_fn}?alt=media"
+
+gunicorn -b 0.0.0.0:$PORT app:api
