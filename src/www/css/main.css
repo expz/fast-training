@@ -28,3 +28,5 @@ button {
 button:hover {
   background-color: #333333;
 }
+
+#loader { display: none; }

@@ -17,6 +17,7 @@ function translate() {
   var data = {
     'fr': document.getElementById('french').value.trim()
   };
+  document.getElementById('loader').style.display = 'inline-block';
   request(data, printTranslation);
 }
 
@@ -37,6 +38,7 @@ function printTranslation() {
     if (xmlhttp.status == 200) {
       var resp = JSON.parse(xmlhttp.responseText);
       document.getElementById('english').textContent = resp.en;
+      document.getElementById('loader').style.display = 'none';
     } else {
       alert('There was an error ' + xmlhttp.status);
     }
