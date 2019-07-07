@@ -460,7 +460,7 @@ class BLEUScoreMetric(LearnerCallback):
                     q.put((self.count, self.bleu))
             qs = len(self.queues) - 1
             i = 0
-            max_iter = 20
+            max_iter = 200
             while qs > 0 and i < max_iter:
                 while not self.queues[self.pindex].empty():
                     c, b = self.queues[self.pindex].get()
