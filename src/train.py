@@ -127,7 +127,9 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
         params['data']['max_length'],
         epoch_size=params['data']['epoch_size'],
         max_val_size=params['data']['max_val_size'],
-        distributed=distributed)
+        distributed=distributed,
+        world_size=world_size,
+        pindex=pindex)
 
     # Define neural network.
     # Max length is 1 more than setting to account for BOS.
@@ -239,25 +241,21 @@ def restore(learn, model_fn, do_dilate=False):
     epoch = None
     if model_fn is not None:
         try:
-            # Remove extension if provided to match `load()`'s expectation.
-            if model_fn[-4:] == '.pth':
-                model_fn = model_fn[:-4]
             # Turning off `strict` means it is okay for the saved model not
             # to have weights for all the parameters of the current model.
-            learn.load(model_fn, strict=False)
+            state = torch.load(model_fn, map_location=learn.data.device)
+            model = learn.model
+            if isinstance(model, DistributedDataParallel):
+                model = model.module
+            model.load_state_dict(state['model'], strict=False)
             if do_dilate:
-                model = learn.model
-                if isinstance(model, DistributedDataParallel):
-                    model = model.module
                 dilate(model.network)
         except FileNotFoundError:
-            logger.error(f'The model file {learn.model_dir}/{model_fn}.pth '
-                         'was not found!')
-            return
+            raise Exception(f'The model file {model_fn} was not found!')
         fields = model_fn.split('/')[-1].split('_')
         if len(fields) > 1:
             try:
-                epoch = int(fields[1]) + 1
+                epoch = int(fields[1].split('.')[0]) + 1
             except ValueError:
                 pass
     return epoch
@@ -296,12 +294,13 @@ def train_worker(pindex,
     os.makedirs(f'{logs_path}/{params["model_name"]}', exist_ok=True)
     ts = datetime.now().strftime('%Y%m%dT%H%M%S')
     csv_fn = f'logs/{params["model_name"]}/log-{params["model_name"]}-{ts}'
-    tbwriter = LearnerTensorboardWriter(learn, logs_path, params['model_name'])
-    tbwriter.metrics_root = 'metrics/'
+    # TODO: Enabling Tensorboard metrics causes an error.
+    # tbwriter = LearnerTensorboardWriter(learn, logs_path, params['model_name'])
+    # tbwriter.metrics_root = 'metrics/'
     learn.callbacks = [
         SaveModelCallback(learn, every='epoch', name='model'),
         CSVLogger(learn, csv_fn),
-        tbwriter,
+    #    tbwriter,
     ]
     if params['network']['type'] != 'pervasive-embeddings':
         learn.metrics.append(BLEUScoreMetric(learn, 5, queues, pindex))

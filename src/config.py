@@ -38,14 +38,15 @@ def parse_config(config,
             load_defaults(params, yaml.load(f, Loader=yaml.SafeLoader))
 
     # Save command line arguments to parameters
-    if not isinstance(device_ids, list):
-        device_ids = [device_ids]
-    if 'cpu' in device_ids:
-        params['cpu'] = True
-        params['gpu_ids'] = None
-    else:
-        params['cpu'] = False
-        params['gpu_ids'] = list(map(lambda s: int(s), device_ids))
+    if device_ids:
+        if not isinstance(device_ids, list):
+            device_ids = [device_ids]
+        if 'cpu' in device_ids:
+            params['cpu'] = True
+            params['gpu_ids'] = None
+        else:
+            params['cpu'] = False
+            params['gpu_ids'] = list(map(lambda s: int(s), device_ids))
     if 'optim' not in params:
         params['optim'] = {}
     if lr is not None:
@@ -62,8 +63,6 @@ def parse_config(config,
     # Set default values for these parameters.
     if 'max_val_size' not in params['data']:
         params['data']['max_val_size'] = None
-    if 'max_test_size' not in params['data']:
-        params['data']['max_test_size'] = None
     if 'loader' not in params['data']:
         params['data']['loader'] = 'standard'
     if freeze is not None or 'freeze' not in params:

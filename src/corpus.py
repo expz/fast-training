@@ -174,10 +174,10 @@ class LanguageCorpus:
                 while len(f1) < 2 or f1[0] in seen:
                     line1 = f_freqs.readline()
                     f1 = line1.split()
+                seen.add(f1[0])
                 while len(f2) < 2 or f2[0] in seen:
                     line2 = g_freqs.readline()
                     f2 = line2.split()
-                seen.add(f1[0])
                 seen.add(f2[0])
                 freqs.append(line1.strip())
                 freqs.append(line2.strip())
@@ -403,18 +403,34 @@ class LowResolutionCorpus(BertCorpus):
 
         The indices of discarded tokens agree across languages.
         """
-        max_len = len(toks[toks.keys()[0]][0])
+        max_len = min([len(toks[lang][0]) for lang in toks])
         n = math.ceil(max_len * p)
-        new_toks = {}
-        new_lens = {}
+        new_toks = {langs[0]: [], langs[1]: []}
+        new_lens = {langs[0]: [], langs[1]: []}
         for sent1, l1, sent2, l2 in zip(toks[langs[0]], lens[langs[0]],
                 toks[langs[1]], lens[langs[1]]):
-            indices = list(range(1, ll))
+            indices = list(range(2, max_len))
             random.shuffle(indices)
-            indices = [i + 1 for i in indices[:n]]
+            indices = indices[:n]
             indices.sort()
-            # TODO: Fix me.
-            new_toks[lang].append([sent[i] for i in indices])
+            new_sent1 = [sent1[i] for i in indices]
+            new_sent2 = [sent2[i] for i in indices]
+            for i, c in enumerate(new_sent1):
+                if c == self.eos:
+                    break
+                elif c == self.pad:
+                    new_sent1[i] = self.eos
+                    new_lens[langs[0]].append(i - 1)
+                    break
+            for i, c in enumerate(new_sent2):
+                if c == self.eos:
+                    break
+                elif c == self.pad:
+                    new_sent2[i] = self.eos
+                    new_lens[langs[1]].append(i - 1)
+                    break
+            new_toks[langs[0]].append(new_sent1)
+            new_toks[langs[1]].append(new_sent2)
         return new_toks, new_lens
 
     def create(self, datafiles, p=0.5, valid_size=0, shuffle=True,

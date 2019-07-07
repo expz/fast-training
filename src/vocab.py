@@ -69,16 +69,16 @@ class VocabData(object):
         self.bos = self.word_to_idx['[CLS]']
         self.eos = self.word_to_idx['[SEP]']
 
-    @classmethod
-    def load(cls, vocab_fn):
-        """Returns the contents of a pickled vocabulary file."""
-        # Load index to word mapping from .infos file.
-        with open(vocab_fn, 'rb') as f:
-            return cls(pickle.load(f, encoding='iso-8859-1'))
+    # @classmethod
+    # def load(cls, vocab_fn):
+    #    """Returns the contents of a pickled vocabulary file."""
+    #    # Load index to word mapping from .infos file.
+    #    with open(vocab_fn, 'rb') as f:
+    #        return cls(pickle.load(f, encoding='iso-8859-1'))
 
     def __len__(self):
         """Size of this vocabulary."""
-        return len(self.idx_to_word)
+        return len(self.word_to_idx)
 
     def to_text(self, t, bos=False, eos=False, pad=False):
         """

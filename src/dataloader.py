@@ -21,6 +21,10 @@ class SubSampler(SequentialSampler):
     It allows epochs which are smaller than the size of an entire dataset.
 
     It also shuffles the dataset using a deterministic seed.
+
+    Written in analogy to
+        https://github.com/pytorch/pytorch/blob/master
+               /torch/utils/data/distributed.py
     """
 
     def __init__(self, data_source, epoch_size=None):
@@ -28,7 +32,7 @@ class SubSampler(SequentialSampler):
         # Copy `self.data_source` to `self.dataset` to match DistributedSampler.
         self.dataset = data_source
         self.epoch = 0
-        self.epoch_size = self.total_size if epoch_size is None else epoch_size
+        self.total_size = len(data_source) if epoch_size is None else epoch_size
 
     def get_indices(self, epoch):
         """
@@ -37,7 +41,7 @@ class SubSampler(SequentialSampler):
 
         The first epoch has `epoch == 0`.
         """
-        s = epoch * self.epoch_size
+        s = epoch * self.total_size
         n = len(self.dataset)
 
         # Deterministically shuffle based on epoch so that distinct processes
@@ -46,11 +50,11 @@ class SubSampler(SequentialSampler):
         g.manual_seed(s // n)
         indices = torch.randperm(n, generator=g).tolist()
 
-        indices = indices[s % n:s % n + self.epoch_size]
+        indices = indices[s % n:s % n + self.total_size]
 
         # Loop back to add extra samples to have a full size epoch.
-        indices += indices[:(self.epoch_size - len(indices))]
-        assert len(indices) == self.epoch_size
+        indices += indices[:(self.total_size - len(indices))]
+        assert len(indices) == self.total_size
 
         return indices
 
@@ -62,7 +66,7 @@ class SubSampler(SequentialSampler):
 
     def __len__(self):
         """Returns the size of the sampleset returned."""
-        return self.epoch_size
+        return self.total_size
 
 
 class DistributedSubSampler(DistributedSampler, SubSampler):
@@ -79,14 +83,12 @@ class DistributedSubSampler(DistributedSampler, SubSampler):
                          blob/master/torch/utils/data/distributed.py
     """
 
-    def __init__(self, dataset, num_replicas=None, rank=None, epoch_size=None):
+    def __init__(self, dataset, num_replicas, rank, epoch_size=None):
         DistributedSampler.__init__(self, dataset, num_replicas, rank)
-        if epoch_size is None:
-            self.epoch_size = self.total_size
-        else:
-            self.num_samples = int(
-                math.ceil(epoch_size * 1.0 / self.num_replicas))
-            self.epoch_size = self.num_samples * self.num_replicas
+        epoch_size = len(dataset) if epoch_size is None else epoch_size
+        self.num_samples = int(
+            math.ceil(epoch_size * 1.0 / self.num_replicas))
+        self.total_size = self.num_samples * self.num_replicas
 
     def __iter__(self):
         """
@@ -97,10 +99,14 @@ class DistributedSubSampler(DistributedSampler, SubSampler):
         self.epoch += 1
 
         # Subsample portion for this worker process.
-        indices = indices[self.rank:self.epoch_size:self.num_replicas]
+        indices = indices[self.rank:self.total_size:self.num_replicas]
         assert len(indices) == self.num_samples
 
         return iter(indices)
+
+    def __len__(self):
+        """Returns the size of the sampleset returned."""
+        return self.num_samples
 
 
 class PervasiveDataLoader(object):
@@ -124,7 +130,9 @@ class PervasiveDataLoader(object):
                  max_length,
                  epoch_size=None,
                  max_val_size=None,
-                 distributed=False):
+                 distributed=False,
+                 world_size=None,
+                 pindex=None):
 
         self.batch_size = batch_size
         self.max_length = max_length + 1
@@ -145,6 +153,8 @@ class PervasiveDataLoader(object):
             # Shrink datasets if they are too large.
             if dsname == 'train':
                 epoch_sz = epoch_size
+                srctgt = srctgt[max_val_size:]
+                tgt2 = tgt2[max_val_size:]
             elif dsname == 'valid' and max_val_size:
                 epoch_sz = min(epoch_size, max_val_size)
                 srctgt = srctgt[:max_val_size]
@@ -153,7 +163,8 @@ class PervasiveDataLoader(object):
 
             if distributed:
                 sampler = DistributedSubSampler(
-                    self.datasets[dsname], epoch_size=epoch_sz)
+                    self.datasets[dsname], world_size, pindex,
+                    epoch_size=epoch_sz)
             else:
                 sampler = SubSampler(
                     self.datasets[dsname], epoch_size=epoch_sz)
