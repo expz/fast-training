@@ -1,6 +1,6 @@
 import argparse
 import os
-import sys
+from subprocess import Popen, PIPE
 import torch
 
 from config import parse_config
@@ -10,22 +10,38 @@ from pervasive import PervasiveOriginal
 from vocab import VocabData
 
 
+MAX_LENGTH = 120
+
+
 def translate(src_text, config, model_path, beam=5):
     params, project_dir = \
         parse_config(config, batch_size=1)
+
+    # Tokenize the sentence.
+    p = Popen([
+        'perl', 'data/moses/tokenizer/tokenizer.perl', '-threads', '8', 
+        '-a', '-l', 'fr'], stdin=PIPE, stdout=PIPE, stderr=PIPE)
+    stdout, stderr = p.communicate(src_text.encode('utf-8'))
+    stdout = stdout.decode('utf-8')
+
+    # Build PyTorch model.
     model, src_vocab, tgt_vocab = build_model(params, project_dir)
+
+    # Load saved model.
     if params['cpu']:
         device = torch.device('cpu')
     else:
         device = torch.device(params['gpu_ids'][0])
     load_model(model, model_path, device)
-    model.eval()
-    src_data = torch.tensor([
-        src_vocab.to_ints(src_text, params['data']['max_length'] + 1)
-    ])
-    src_data = src_data.to(device)
-    print('Translating...this can take a minute...')
-    out_data = beam_search(model, src_data, beam, params['data']['max_length'])
+
+    # Prepare input vector.
+    src_toks = src_vocab.to_ints(stdout)[:MAX_LENGTH]
+    src_data = torch.tensor([src_toks]).to(device)
+    max_tgt_length = min(
+        MAX_LENGTH, int(max(len(src_toks) * 1.5, len(src_toks) + 3)))
+
+    # Beam search.
+    out_data = beam_search(model, src_data, beam, max_tgt_length)
     out_text = tgt_vocab.to_text(out_data)[0]
     print(out_text)
 
