@@ -449,29 +449,31 @@ class BLEUScoreMetric(LearnerCallback):
         """
         if not train:
             batch_size = last_input.size(0)
-            src_data, tgt_data = last_input.split([self.Ts, self.Tt], dim=1)
-            out_data = beam_search(self.learn.model, src_data, self.beam_size,
-                                   self.Tt - 1)
-            assert (list(out_data.shape) == [batch_size, self.Tt - 1])
-            bleu = 0.0
-            for b in range(batch_size):
-                out_l = []
-                for i in range(self.Tt - 1):
-                    if (out_data[b][i].item() == self.eos or
-                            out_data[b][i].item() == self.pad):
-                        break
-                    out_l.append(str(out_data[b][i].item()))
-                tgt_l = []
-                for i in range(1, self.Tt):
-                    if (tgt_data[b][i].item() == self.eos or
-                            tgt_data[b][i].item() == self.pad):
-                        # The Moses BLEU score script gives 0 for sentences of
-                        # length less than four, so ignore those BLEU score.
-                        if i < 4:
-                            batch_size -= 1
-                        break
-                    tgt_l.append(str(tgt_data[b][i].item()))
-                bleu += bleu_score([' '.join(out_l)], [[' '.join(tgt_l)]]) * 100
+            n = min(batch_size, 16)
+            for in_data in last_input.split(n, dim=0):
+                src_data, tgt_data = in_data.split([self.Ts, self.Tt], dim=1)
+                out_data = beam_search(self.learn.model, src_data,
+                                       self.beam_size, self.Tt - 1)
+                bleu = 0.0
+                for b in range(n):
+                    out_l = []
+                    for i in range(self.Tt - 1):
+                        if (out_data[b][i].item() == self.eos or
+                                out_data[b][i].item() == self.pad):
+                            break
+                        out_l.append(str(out_data[b][i].item()))
+                    tgt_l = []
+                    for i in range(1, self.Tt):
+                        if (tgt_data[b][i].item() == self.eos or
+                                tgt_data[b][i].item() == self.pad):
+                            # The Moses BLEU score script gives 0 for sentences
+                            # of length less than 4, so ignore those BLEU score.
+                            if i < 4:
+                                batch_size -= 1
+                            break
+                        tgt_l.append(str(tgt_data[b][i].item()))
+                    bleu += bleu_score(
+                        [' '.join(out_l)], [[' '.join(tgt_l)]]) * 100
             self.count += batch_size
             self.bleu += bleu
 
