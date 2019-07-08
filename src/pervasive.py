@@ -386,14 +386,14 @@ class PervasiveNetwork(nn.Sequential):
                                       efficient=efficient,
                                       kernel_size=kernel_size)
 
-        if downsample:
-            layers['upsample'] = nn.Sequential(OrderedDict([
-                #('upsample_permute1', PermutationLayer(0, 2, 1)),
-                ('upsample', MaskedConvTranspose2d(
-                    2 * emb_size, 2 * emb_size, kernel_size=3, pad=1, stride=2,
-                    bias=True)),
-                #('upsample_permute2', PermutationLayer(0, 2, 1)),
-            ]))
+        # Masked transpose convolution gives access to information
+        # about future tokens at pixels falling between input pixels.
+        #
+        # if downsample:
+        #    layers['upsample'] = MaskedConvTranspose2d(
+        #            2 * emb_size, 2 * emb_size, kernel_size=3, pad=1, stride=2,
+        #            bias=True),
+        #    ]))
 
         layers['aggregator'] = Aggregator()
 
