@@ -157,7 +157,6 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
             vocab.bos,
             loader.max_length,
             loader.max_length,
-            loader.datasets['train'].arrays[0].shape[2],
             params['encoder']['embedding_dim'],
             params['encoder']['embedding_dropout'],
             params['network']['dropout'],

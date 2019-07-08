@@ -364,10 +364,18 @@ class PervasiveNetwork(nn.Sequential):
                  growth_rate=32,
                  bias=False,
                  efficient=False,
-                 kernel_size=3):
+                 kernel_size=3,
+                 downsample=False):
         self.Ts = Ts
         self.Tt = Tt
         self.input_channels = 2 * emb_size
+
+        layers = OrderedDict([])
+
+        if downsample:
+            layers['downsample'] = MaskedConv2d(
+                2 * emb_size, 2 * emb_size, kernel_size=3, pad=1, stride=2,
+                bias=True)
 
         densenet = DenseNet(self.input_channels,
                             block_sizes,
@@ -378,17 +386,21 @@ class PervasiveNetwork(nn.Sequential):
                             efficient=efficient,
                             kernel_size=kernel_size)
 
-        aggregator = Aggregator()
+        if downsample:
+            layers['upsample'] = nn.Sequential(OrderedDict([
+                #('upsample_permute1', PermutationLayer(0, 2, 1)),
+                ('upsample', MaskedConvTranspose2d(
+                    2 * emb_size, 2 * emb_size, kernel_size=3, pad=1, stride=2,
+                    bias=True)),
+                #('upsample_permute2', PermutationLayer(0, 2, 1)),
+            ]))
 
-        linear = nn.Linear(densenet.output_channels, emb_size)
-        relu = nn.ReLU(inplace=True)
+        layers['aggregator'] = Aggregator()
 
-        super().__init__(OrderedDict([
-            ('densenet', densenet),
-            ('aggregator', aggregator),
-            ('linear', linear),
-            ('relu', relu)
-        ]))
+        layers['linear'] = nn.Linear(densenet.output_channels, emb_size)
+        layers['relu'] = nn.ReLU(inplace=True)
+
+        super().__init__(layers)
 
 
 class PermutationLayer(nn.Module):
@@ -730,16 +742,11 @@ class PervasiveDownsample(PervasiveBert):
             ('projection_relu', nn.ReLU(inplace=True)),
         ]))
 
-        self.downsample = MaskedConv2d(
-            emb_size, emb_size, kernel_size=3, pad=1, stride=2, bias=True)
-
         # Source and target embeddings will be concatenated to form input.
         self.network = PervasiveNetwork(
-            block_sizes, Ts, Tt, emb_size, conv_dropout, division_factor,
-            growth_rate, bias, efficient, kernel_size)
-
-        self.upsample = MaskedConvTranspose2d(
-            emb_size, emb_size, kernel_size=3, pad=1, stride=2, bias=True)
+            block_sizes, Ts // 2 + 1, Tt // 2 + 1, emb_size, conv_dropout,
+            division_factor, growth_rate, bias, efficient, kernel_size,
+            downsample=True)
 
         # Unprojection layer.
         self.unprojection = nn.Sequential(OrderedDict([
@@ -757,31 +764,6 @@ class PervasiveDownsample(PervasiveBert):
             nn.Linear(bert_emb.embedding_dim, bert_emb.num_embeddings)
         self.prediction.weight = self.embedding.weight
         self.prediction.weight.requires_grad = False
-
-    def _forward(self, src_data, tgt_data):
-        """
-        Forward pass of `data` through the entire model.
-        """
-        # Embedding with projection.
-        src_emb = self.projection(self.embedding(src_data))
-        tgt_emb = self.projection(self.embedding(tgt_data))
-
-        # Prepare grid where embedding dim becomes channels.
-        src_grid = src_emb.unsqueeze(1).repeat(1, tgt_emb.shape[1], 1, 1)
-        tgt_grid = tgt_emb.unsqueeze(2).repeat(1, 1, src_emb.shape[1], 1)
-        X = torch.cat((src_grid, tgt_grid), dim=3)
-        X = X.permute(0, 3, 1, 2)
-
-        # Pass data through DenseNet.
-        X = self.downsample(X)
-        X = self.network(X)
-        X = self.upsample(X)
-
-        # Unprojection layer.
-        X = self.unprojection(X)
-
-        X = self.prediction(self.prediction_dropout(X))
-        return X
 
 
 class PervasiveEmbedding(Pervasive):
