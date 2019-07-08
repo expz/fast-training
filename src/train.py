@@ -449,13 +449,12 @@ class BLEUScoreMetric(LearnerCallback):
         """
         if not train:
             batch_size = last_input.size(0)
-            n = min(batch_size, 16)
-            for in_data in last_input.split(n, dim=0):
+            for in_data in last_input.split(min(batch_size, 16), dim=0):
                 src_data, tgt_data = in_data.split([self.Ts, self.Tt], dim=1)
                 out_data = beam_search(self.learn.model, src_data,
                                        self.beam_size, self.Tt - 1)
                 bleu = 0.0
-                for b in range(n):
+                for b in range(out_data.shape[0]):
                     out_l = []
                     for i in range(self.Tt - 1):
                         if (out_data[b][i].item() == self.eos or
