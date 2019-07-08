@@ -34,7 +34,7 @@ class Aggregator(nn.Module):
         return x.max(dim=3)[0].permute(0, 2, 1)
 
 
-def dilate(network):
+def dilate(network, fill_with_avg=True):
     """
     This function takes in a `PervasiveNetwork` with convolutions of size 3
     and dilates them to size 5. It fills in the gaps of the newly created
@@ -50,21 +50,24 @@ def dilate(network):
                     w = torch.Tensor(
                         m2.conv2.in_channels,
                         m2.conv2.out_channels // m2.conv2.groups, 5, 5)
+                    nn.init.kaiming_uniform_(w, nonlinearity='relu')
                     for i in range(3):
                         for j in range(3):
                             w[:, :, i * 2, j * 2] = \
                                 m2.conv2.weight.data[:, :, i, j]
-                            w[:, :, i + 1, j + 1] = \
-                                (m2.conv2.weight.data[:, :, i, j]
-                                    + m2.conv2.weight.data[:, :, 1, 1]) / 2
-                    for i, j in [(0, 1), (0, 3), (1, 4), (3, 4)]:
-                        w[:, :, i, j] = \
-                            (m2.conv2.weight.data[:, :, i, j - 1]
-                                + m2.conv2.weight.data[:, :, i, j + 1]) / 2
-                    for i, j in [(1, 0), (3, 0),  (4, 3), (4, 1)]:
-                        w[:, :, i, j] = \
-                            (m2.conv2.weight.data[:, :, i - 1, j]
-                                + m2.conv2.weight.data[:, :, i + 1, j]) / 2
+                            if fill_with_avg:
+                                w[:, :, i + 1, j + 1] = \
+                                    (m2.conv2.weight.data[:, :, i, j]
+                                        + m2.conv2.weight.data[:, :, 1, 1]) / 2
+                    if fill_with_avg:
+                        for i, j in [(0, 1), (0, 3), (1, 4), (3, 4)]:
+                            w[:, :, i, j] = \
+                                (m2.conv2.weight.data[:, :, i, j - 1]
+                                    + m2.conv2.weight.data[:, :, i, j + 1]) / 2
+                        for i, j in [(1, 0), (3, 0),  (4, 3), (4, 1)]:
+                            w[:, :, i, j] = \
+                                (m2.conv2.weight.data[:, :, i - 1, j]
+                                    + m2.conv2.weight.data[:, :, i + 1, j]) / 2
                     m2.conv2.weight = Parameter(w)
                     m2.conv2.k = 5
                     m2.conv2.register_buffer(
@@ -75,7 +78,32 @@ def dilate(network):
                             (5, 5), dtype=m2.conv2.weight.data.dtype))
 
 
-class MaskedConv2d(nn.Conv2d):
+class MaskedConv(nn.Module):
+
+    def __init__(self, ConvClass, in_channels, out_channels, kernel_size=3,
+                 pad=0, stride=1, dilation=1, groups=1, bias=False):
+
+        self.ConvClass = ConvClass
+        ConvClass.__init__(
+            self, in_channels, out_channels, kernel_size, padding=pad, stride=1,
+            groups=groups, dilation=dilation, bias=bias)
+
+        _, _, self.k, _ = self.weight.size()
+        # Use `register_buffer()` so `mask` will be moved to a cuda device with
+        # rest of the module.
+        self.register_buffer(
+            'mask', torch.zeros(self.weight.data.shape, dtype=torch.uint8))
+        if self.k > 1:
+            self.mask[:, :, self.k // 2 + 1:, :] = 1
+        self.register_buffer(
+            'zeros', torch.zeros(self.mask.shape, dtype=self.weight.data.dtype))
+
+    def forward(self, x, *args):
+        self.weight.data.masked_scatter_(self.mask, self.zeros)
+        return self.ConvClass.forward(self, x)
+
+
+class MaskedConv2d(MaskedConv, nn.Conv2d):
     """
     This is a masked 2D convolutional layer, i.e. A convolution with a filter
     that has been zeroed out to the right of the center axis. This
@@ -89,30 +117,39 @@ class MaskedConv2d(nn.Conv2d):
                  in_channels,
                  out_channels,
                  kernel_size=3,
+                 pad=None,
+                 stride=1,
                  dilation=1,
                  groups=1,
                  bias=False):
-        pad = (dilation * (kernel_size - 1)) // 2
-        super(MaskedConv2d, self).__init__(in_channels,
-                                           out_channels,
-                                           kernel_size,
-                                           padding=pad,
-                                           groups=groups,
-                                           dilation=dilation,
-                                           bias=bias)
-        _, _, self.k, _ = self.weight.size()
-        # Use `register_buffer()` so `mask` will be moved to a cuda device with
-        # rest of the module.
-        self.register_buffer(
-            'mask', torch.zeros(self.weight.data.shape, dtype=torch.uint8))
-        if self.k > 1:
-            self.mask[:, :, self.k // 2 + 1:, :] = 1
-        self.register_buffer(
-            'zeros', torch.zeros(self.mask.shape, dtype=self.weight.data.dtype))
+        pad = (dilation * (kernel_size - 1)) // 2 if pad is None else pad
+        MaskedConv.__init__(
+            self, nn.Conv2d, in_channels, out_channels, kernel_size, pad=pad,
+            stride=1, groups=groups, dilation=dilation, bias=bias)
 
-    def forward(self, x, *args):
-        self.weight.data.masked_scatter_(self.mask, self.zeros)
-        return super(MaskedConv2d, self).forward(x)
+
+class MaskedConvTranspose2d(MaskedConv, nn.ConvTranspose2d):
+    """
+    This is a masked 2D transpose convolutional layer, i.e. A transpose
+    convolution with a filter that has been zeroed out to the right of the
+    center axis. This prevents information from output tokens after a given
+    output token affecting its choice.
+
+    Based on https://github.com/elbayadm/attn2d/blob/master/nmt/models/conv2d.py
+    """
+
+    def __init__(self,
+                 in_channels,
+                 out_channels,
+                 kernel_size=3,
+                 pad=0,
+                 stride=1,
+                 dilation=1,
+                 groups=1,
+                 bias=False):
+        MaskedConv.__init__(
+            self, nn.ConvTranspose2d, in_channels, out_channels, kernel_size,
+            pad=pad, stride=1, groups=groups, dilation=dilation, bias=bias)
 
 
 class DenseLayer(nn.Module):
@@ -208,9 +245,9 @@ class DenseBlock(nn.Module):
                  growth_rate,
                  dropout,
                  bias,
-                 efficient=False):
+                 efficient=False,
+                 kernel_size=3):
         super(DenseBlock, self).__init__()
-        kernel_size = 3
         for i in range(num_layers):
             layer = DenseLayer(input_size + i * growth_rate,
                                growth_rate,
@@ -275,7 +312,8 @@ class DenseNet(nn.Module):
                  growth_rate=32,
                  division_factor=2,
                  bias=False,
-                 efficient=False):
+                 efficient=False,
+                 kernel_size=3):
         super(DenseNet, self).__init__()
 
         self.efficient = efficient
@@ -295,7 +333,8 @@ class DenseNet(nn.Module):
                                growth_rate=growth_rate,
                                dropout=dropout,
                                bias=bias,
-                               efficient=efficient)
+                               efficient=efficient,
+                               kernel_size=3)
             self.model.add_module(f'denseblock{i + 1}', block)
             num_features = num_features + num_layers * growth_rate
             trans = Transition(input_size=num_features,
@@ -324,7 +363,8 @@ class PervasiveNetwork(nn.Sequential):
                  division_factor=2,
                  growth_rate=32,
                  bias=False,
-                 efficient=False):
+                 efficient=False,
+                 kernel_size=3):
         self.Ts = Ts
         self.Tt = Tt
         self.input_channels = 2 * emb_size
@@ -335,7 +375,8 @@ class PervasiveNetwork(nn.Sequential):
                             growth_rate=growth_rate,
                             division_factor=division_factor,
                             bias=bias,
-                            efficient=efficient)
+                            efficient=efficient,
+                            kernel_size=kernel_size)
 
         aggregator = Aggregator()
 
@@ -386,7 +427,8 @@ class PervasiveOriginal(nn.Module):
                  division_factor=2,
                  growth_rate=32,
                  bias=False,
-                 efficient=False):
+                 efficient=False,
+                 kernel_size=3):
         nn.Module.__init__(self)
 
         self.bos = bos
@@ -398,7 +440,7 @@ class PervasiveOriginal(nn.Module):
 
         self.network = PervasiveNetwork(
             block_sizes, Ts, Tt, emb_size, conv_dropout, division_factor,
-            growth_rate, bias, efficient)
+            growth_rate, bias, efficient, kernel_size)
 
         self.prediction_dropout = nn.Dropout(prediction_dropout)
         self.prediction = nn.Linear(emb_size, vocab_sz)
@@ -514,7 +556,8 @@ class Pervasive(PervasiveOriginal):
                  division_factor=2,
                  growth_rate=32,
                  bias=False,
-                 efficient=False):
+                 efficient=False,
+                 kernel_size=3):
         nn.Module.__init__(self)
 
         self.bos = bos
@@ -537,7 +580,7 @@ class Pervasive(PervasiveOriginal):
         # Source and target embeddings will be concatenated to form input.
         self.network = PervasiveNetwork(
             block_sizes, Ts, Tt, emb_size, conv_dropout, division_factor,
-            growth_rate, bias, efficient)
+            growth_rate, bias, efficient, kernel_size)
 
         # Unprojection layer.
         self.unprojection = nn.Sequential(OrderedDict([
@@ -599,7 +642,8 @@ class PervasiveBert(Pervasive):
                  division_factor=2,
                  growth_rate=32,
                  bias=False,
-                 efficient=False):
+                 efficient=False,
+                 kernel_size=3):
         nn.Module.__init__(self)
 
         self.bos = bos
@@ -624,7 +668,7 @@ class PervasiveBert(Pervasive):
         # Source and target embeddings will be concatenated to form input.
         self.network = PervasiveNetwork(
             block_sizes, Ts, Tt, emb_size, conv_dropout, division_factor,
-            growth_rate, bias, efficient)
+            growth_rate, bias, efficient, kernel_size)
 
         # Unprojection layer.
         self.unprojection = nn.Sequential(OrderedDict([
@@ -642,6 +686,102 @@ class PervasiveBert(Pervasive):
             nn.Linear(bert_emb.embedding_dim, bert_emb.num_embeddings)
         self.prediction.weight = self.embedding.weight
         self.prediction.weight.requires_grad = False
+
+
+class PervasiveDownsample(PervasiveBert):
+    """
+    This class is a Pervasive neural network which uses BERT pre-trained
+    multilingual, cased embeddings. The embeddings are 768-dimensional
+    and are projected down to 128 dimension before being fed into the network.
+    """
+
+    def __init__(self,
+                 block_sizes,
+                 bos,
+                 Ts=51,
+                 Tt=51,
+                 emb_size=128,
+                 emb_dropout=0.2,
+                 conv_dropout=0.2,
+                 prediction_dropout=0.2,
+                 division_factor=2,
+                 growth_rate=32,
+                 bias=False,
+                 efficient=False,
+                 kernel_size=3):
+        nn.Module.__init__(self)
+
+        self.bos = bos
+        self.Ts = Ts
+        self.Tt = Tt
+
+        # Load the BERT 768-dim embeddings into a frozen layer.
+        bert_model = BertModel.from_pretrained('bert-base-multilingual-cased')
+        bert_emb = bert_model.embeddings.word_embeddings
+        self.embedding = nn.Embedding.from_pretrained(bert_emb.weight)
+
+        # Embed and project to a lower-dimensional embedding.
+        self.projection = nn.Sequential(OrderedDict([
+            ('projection_dropout', nn.Dropout(emb_dropout)),
+            ('projection', nn.Linear(bert_emb.embedding_dim, emb_size)),
+            ('projection_perm1', PermutationLayer(0, 2, 1)),
+            ('projection_norm', nn.BatchNorm1d(emb_size)),
+            ('projection_perm2', PermutationLayer(0, 2, 1)),
+            ('projection_relu', nn.ReLU(inplace=True)),
+        ]))
+
+        self.downsample = MaskedConv2d(
+            emb_size, emb_size, kernel_size=3, pad=1, stride=2, bias=True)
+
+        # Source and target embeddings will be concatenated to form input.
+        self.network = PervasiveNetwork(
+            block_sizes, Ts, Tt, emb_size, conv_dropout, division_factor,
+            growth_rate, bias, efficient, kernel_size)
+
+        self.upsample = MaskedConvTranspose2d(
+            emb_size, emb_size, kernel_size=3, pad=1, stride=2, bias=True)
+
+        # Unprojection layer.
+        self.unprojection = nn.Sequential(OrderedDict([
+            ('unprojection_dropout', nn.Dropout(emb_dropout)),
+            ('unprojection', nn.Linear(emb_size, bert_emb.embedding_dim)),
+            ('unprojection_perm1', PermutationLayer(0, 2, 1)),
+            ('unprojection_norm', nn.BatchNorm1d(bert_emb.embedding_dim)),
+            ('unprojection_perm2', PermutationLayer(0, 2, 1)),
+            ('unprojection_relu', nn.ReLU(inplace=True)),
+        ]))
+
+        # Output layer.
+        self.prediction_dropout = nn.Dropout(prediction_dropout)
+        self.prediction = \
+            nn.Linear(bert_emb.embedding_dim, bert_emb.num_embeddings)
+        self.prediction.weight = self.embedding.weight
+        self.prediction.weight.requires_grad = False
+
+    def _forward(self, src_data, tgt_data):
+        """
+        Forward pass of `data` through the entire model.
+        """
+        # Embedding with projection.
+        src_emb = self.projection(self.embedding(src_data))
+        tgt_emb = self.projection(self.embedding(tgt_data))
+
+        # Prepare grid where embedding dim becomes channels.
+        src_grid = src_emb.unsqueeze(1).repeat(1, tgt_emb.shape[1], 1, 1)
+        tgt_grid = tgt_emb.unsqueeze(2).repeat(1, 1, src_emb.shape[1], 1)
+        X = torch.cat((src_grid, tgt_grid), dim=3)
+        X = X.permute(0, 3, 1, 2)
+
+        # Pass data through DenseNet.
+        X = self.downsample(X)
+        X = self.network(X)
+        X = self.upsample(X)
+
+        # Unprojection layer.
+        X = self.unprojection(X)
+
+        X = self.prediction(self.prediction_dropout(X))
+        return X
 
 
 class PervasiveEmbedding(Pervasive):

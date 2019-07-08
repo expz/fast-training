@@ -21,7 +21,8 @@ from bleu import bleu_score
 from dataloader import PervasiveDataLoader
 from evaluate import beam_search
 from pervasive import (
-    Pervasive, PervasiveBert, PervasiveEmbedding, PervasiveOriginal, dilate
+    Pervasive, PervasiveBert, PervasiveEmbedding, PervasiveOriginal, dilate,
+    PervasiveDownsample
 )
 from vocab import VocabData
 
@@ -82,6 +83,7 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
         'network.dropout',
         'network.efficient',
         'network.growth_rate',
+        'network.kernel_size',
     ])
 
     model_name = params['model_name']
@@ -133,14 +135,6 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
     # Define neural network.
     # Max length is 1 more than setting to account for BOS.
     if params['network']['type'] == 'pervasive-embeddings':
-        if (params['encoder']['embedding_dim']
-                != params['decoder']['embedding_dim']):
-            raise ValueError('Encoder and decoder must have the same embedding '
-                             'dimension to use pretrained embeddings.')
-        elif (params['encoder']['embedding_dropout']
-                != params['decoder']['embedding_dropout']):
-            raise ValueError('Encoder and decoder must have the same embedding '
-                             'dropout to use pretrained embeddings.')
         model = PervasiveEmbedding(
             params['network']['block_sizes'],
             vocab.bos,
@@ -157,6 +151,24 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
             params['network']['efficient'])
         # Rescale loss by 100 for easier display in training output.
         loss_func = scaled_mse_loss
+    elif params['network']['type'] == 'pervasive-downsample':
+        model = PervasiveDownsample(
+            params['network']['block_sizes'],
+            vocab.bos,
+            loader.max_length,
+            loader.max_length,
+            loader.datasets['train'].arrays[0].shape[2],
+            params['encoder']['embedding_dim'],
+            params['encoder']['embedding_dropout'],
+            params['network']['dropout'],
+            params['decoder']['prediction_dropout'],
+            params['network']['division_factor'],
+            params['network']['growth_rate'],
+            params['network']['bias'],
+            params['network']['efficient'],
+            params['network']['kernel_size'])
+        # Rescale loss by 100 for easier display in training output.
+        loss_func = F.cross_entropy
     elif params['network']['type'] == 'pervasive-bert':
         model = PervasiveBert(
             params['network']['block_sizes'],
@@ -170,7 +182,8 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
             params['network']['division_factor'],
             params['network']['growth_rate'],
             params['network']['bias'],
-            params['network']['efficient'])
+            params['network']['efficient'],
+            params['network']['kernel_size'])
         loss_func = F.cross_entropy
     elif params['network']['type'] == 'pervasive-original':
         model = PervasiveOriginal(
@@ -186,7 +199,8 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
             params['network']['division_factor'],
             params['network']['growth_rate'],
             params['network']['bias'],
-            params['network']['efficient'])
+            params['network']['efficient'],
+            params['network']['kernel_size'])
         loss_func = F.cross_entropy
     elif params['network']['type'] == 'pervasive':
         model = Pervasive(
@@ -195,7 +209,7 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
             vocab.bos,
             loader.max_length,
             loader.max_length,
-            params['encoder']['embedding_dim'],
+            params['encoder']['initial_emb_dim'],
             params['encoder']['embedding_dim'],
             params['encoder']['embedding_dropout'],
             params['network']['dropout'],
@@ -203,7 +217,8 @@ def build_learner(params, project_dir, pindex=0, comm_file=None, queues=None):
             params['network']['division_factor'],
             params['network']['growth_rate'],
             params['network']['bias'],
-            params['network']['efficient'])
+            params['network']['efficient'],
+            params['network']['kernel_size'])
         loss_func = F.cross_entropy
 
     model.init_weights()
@@ -248,7 +263,7 @@ def restore(learn, model_fn, do_dilate=False):
                 model = model.module
             model.load_state_dict(state['model'], strict=False)
             if do_dilate:
-                dilate(model.network)
+                dilate(model.network, fill_with_avg=True)
         except FileNotFoundError:
             raise Exception(f'The model file {model_fn} was not found!')
         fields = model_fn.split('/')[-1].split('_')
@@ -297,6 +312,7 @@ def train_worker(pindex,
     # tbwriter = LearnerTensorboardWriter(learn, logs_path, params['model_name'])
     # tbwriter.metrics_root = 'metrics/'
     learn.callbacks = [
+        # Save callback causes 'Model not found' error when restoring.
         SaveModelCallback(learn, every='epoch', name='model'),
         CSVLogger(learn, csv_fn),
     #    tbwriter,
@@ -308,7 +324,7 @@ def train_worker(pindex,
         if isinstance(learn.model, DistributedDataParallel):
             model = learn.model.module
         model = learn.model
-        learn.split([model.linear, model.prediction_dropout])
+        learn.split([model.unprojection, model.prediction_dropout])
         # Untie target language embedding weights from input layer.
         model.prediction.weight = torch.nn.Parameter(
             model.prediction.weight.clone())
@@ -319,6 +335,16 @@ def train_worker(pindex,
         'optim.epochs',
         'optim.lr',
     ])
+    if pindex == 0:
+        g = len(params['gpu_ids']) if params['gpu_ids'] else 0
+        logger.info(f"Learning rate: {params['optim']['lr']}, "
+                    f"Beta1: {params['optim']['beta1']}, "
+                    f"Beta2: {params['optim']['beta2']}, "
+                    f"Weight decay: {params['optim']['wd']}, "
+                    f"Batch size: {params['data']['batch_size']}, "
+                    f"Epoch size: {params['data']['epoch_size']}, "
+                    f"Epochs: {params['optim']['epochs']}, "
+                    f"GPUs: {g}")
     learn.fit_one_cycle(params['optim']['epochs'],
                         params['optim']['lr'],
                         tot_epochs=params['optim']['epochs'],
