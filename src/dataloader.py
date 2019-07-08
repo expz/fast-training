@@ -50,11 +50,11 @@ class SubSampler(SequentialSampler):
         g.manual_seed(s // n)
         indices = torch.randperm(n, generator=g).tolist()
 
-        indices = indices[s % n:s % n + self.total_size]
+        epoch_indices = indices[s % n:s % n + self.total_size]
 
         # Loop back to add extra samples to have a full size epoch.
-        indices += indices[:(self.total_size - len(indices))]
-        assert len(indices) == self.total_size
+        epoch_indices += indices[:(self.total_size - len(epoch_indices))]
+        assert len(epoch_indices) == self.total_size
 
         return indices
 
