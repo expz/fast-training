@@ -377,14 +377,14 @@ class PervasiveNetwork(nn.Sequential):
                 2 * emb_size, 2 * emb_size, kernel_size=3, pad=1, stride=2,
                 bias=True)
 
-        densenet = DenseNet(self.input_channels,
-                            block_sizes,
-                            dropout=conv_dropout,
-                            growth_rate=growth_rate,
-                            division_factor=division_factor,
-                            bias=bias,
-                            efficient=efficient,
-                            kernel_size=kernel_size)
+        layers['densenet'] = DenseNet(self.input_channels,
+                                      block_sizes,
+                                      dropout=conv_dropout,
+                                      growth_rate=growth_rate,
+                                      division_factor=division_factor,
+                                      bias=bias,
+                                      efficient=efficient,
+                                      kernel_size=kernel_size)
 
         if downsample:
             layers['upsample'] = nn.Sequential(OrderedDict([
@@ -397,7 +397,8 @@ class PervasiveNetwork(nn.Sequential):
 
         layers['aggregator'] = Aggregator()
 
-        layers['linear'] = nn.Linear(densenet.output_channels, emb_size)
+        layers['linear'] = nn.Linear(
+            layers['densenet'].output_channels, emb_size)
         layers['relu'] = nn.ReLU(inplace=True)
 
         super().__init__(layers)
