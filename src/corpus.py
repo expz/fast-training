@@ -315,7 +315,7 @@ class BertCorpus(LanguageCorpus):
         self._filter_sents(raw_text_path, langs, use_cache)
 
         # Load saved tokenized data if we cached it during a previous run.
-        int_tok_path = f'int_tok.pickle'
+        int_tok_path = os.path.join(self.data_dir, self.name, f'int_tok.pickle')
         if use_cache and os.path.isfile(int_tok_path):
             logging.info(f'Loading BPE tokenized data from {int_tok_path}.')
             try:
@@ -415,28 +415,90 @@ class BertCorpus(LanguageCorpus):
         return self._save_with_lens(toks, lens, valid_size, dtype='int32')
 
 
-class LowResolutionCorpus(BertCorpus):
+class DropNthTokenCorpus(BertCorpus):
+    """
+    This is a corpus where every nth word has been dropped. The BOS token
+    and the first token of the sentence are never dropped. The remaining
+    non-padding tokens are always terminated by a EOS token.
+
+    This keep `n` versions of each sentence where the token dropping
+    starts at different offsets.
+    """
 
     def __init__(self,
                  name,
+                 n,
                  shuffle=True,
                  max_length=200):
         super().__init__(name, shuffle, max_length)
+        self.n = n
 
-    def _subsample(self, toks, lens, p):
+    def _subsample(self, toks, lens):
         """
-        Creates a new dataset which contains each sentence from `tok` starting
-        with BOS and the first token of the sentence and with `p` percent total
-        tokens randomly kept. The rest of the tokens are discarded.
-
-        The indices of discarded tokens agree across languages.
+        Discards every nth token from `toks`.
         """
+        logging.info(f'Discarding every {self.n}th token.')
         max_len = min([len(toks[lang][0]) for lang in toks])
-        n = math.ceil(max_len * p)
-        new_toks = {langs[0]: [], langs[1]: []}
-        new_lens = {langs[0]: [], langs[1]: []}
-        for sent1, l1, sent2, l2 in zip(toks[langs[0]], lens[langs[0]],
-                toks[langs[1]], lens[langs[1]]):
+        new_max_len = (max_len - max_len // self.n) + 1
+        new_toks = {lang: [] for lang in toks}
+        new_lens = {lang: [] for lang in lens}
+        for lang in toks:
+            for sent, ll in zip(toks[lang], lens[lang]):
+                for k in range(self.n):
+                    new_sent = [
+                        self.eos if ll + 1 <= i and i <= ll + 2 else w
+                        for i, w in enumerate(sent)
+                        if ((i - 1) % self.n != k or i == 1)
+                    ]
+                    new_sent = \
+                        new_sent + [self.pad] * (new_max_len - len(new_sent))
+                    new_toks[lang].append(new_sent)
+                    new_lens[lang].append(
+                        ll - (ll + self.n - k - 1) // self.n + int(k == 0))
+        return new_toks, new_lens
+
+    def create(self, datafiles, max_size=None, valid_size=0, use_cache=False):
+        """
+        Create the dataset from `datafiles` by dropping every nth token.
+        """
+        out_path, langs = self._clean(datafiles, max_size, use_cache)
+        toks, lens = self._encode(out_path, langs)
+        if self.shuffle:
+            self._shuffle_with_lens(toks, lens)
+        toks, lens = self._subsample(toks, lens)
+        return self._save_with_lens(toks, lens, valid_size, dtype='int32')
+
+
+class DropRandomPercentCorpus(BertCorpus):
+    """
+    This is a corpus which contains each sentence from `tok` starting
+    with BOS and the first token of the sentence and with `p` percent total
+    tokens randomly kept. The rest of the tokens are discarded.
+
+    The indices of discarded tokens agree across languages.
+    """
+
+    def __init__(self,
+                 name,
+                 p,
+                 shuffle=True,
+                 max_length=200):
+        super().__init__(name, shuffle, max_length)
+        self.p = p
+
+    def _subsample(self, toks, lens):
+        """
+        Keep `self.p` percent tokens from every sentence. Removed tokens
+        can be padding as well as part of the sentence.
+        """
+        logging.info(f'Keeping random set of {self.p * 100}% of tokens.')
+        max_len = min([len(toks[lang][0]) for lang in toks])
+        n = math.ceil(max_len * self.p)
+        new_toks = {lang: [] for lang in toks}
+        new_lens = {lang: [] for lang in lens}
+        lang1, lang2 = tuple(new_toks.keys())
+        for sent1, l1, sent2, l2 in zip(toks[lang1], lens[lang1],
+                toks[lang2], lens[lang2]):
             indices = list(range(2, max_len))
             random.shuffle(indices)
             indices = indices[:n]
@@ -448,21 +510,20 @@ class LowResolutionCorpus(BertCorpus):
                     break
                 elif c == self.pad:
                     new_sent1[i] = self.eos
-                    new_lens[langs[0]].append(i - 1)
+                    new_lens[lang1].append(i - 1)
                     break
             for i, c in enumerate(new_sent2):
                 if c == self.eos:
                     break
                 elif c == self.pad:
                     new_sent2[i] = self.eos
-                    new_lens[langs[1]].append(i - 1)
+                    new_lens[lang2].append(i - 1)
                     break
-            new_toks[langs[0]].append(new_sent1)
-            new_toks[langs[1]].append(new_sent2)
+            new_toks[lang1].append(new_sent1)
+            new_toks[lang2].append(new_sent2)
         return new_toks, new_lens
 
-    def create(self, datafiles, p=0.5, valid_size=0, shuffle=True,
-               max_size=None, use_cache=False):
+    def create(self, datafiles, max_size=None, valid_size=0, use_cache=False):
         """
         Create the dataset from `datafiles` by keeping `p` percent of
         the input/output tokens.

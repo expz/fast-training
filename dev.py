@@ -14,8 +14,8 @@ import torch
 
 from config import parse_config
 from corpus import (
-    LanguageCorpus, BertCorpus, EmbeddingCorpus,
-    LowResolutionEmbeddingCorpus)
+    LanguageCorpus, BertCorpus, LowResolutionEmbeddingCorpus,
+    DropRandomPercentCorpus, DropNthTokenCorpus)
 from evaluate import beam_search
 from train import build_learner, train_worker, restore
 
@@ -206,17 +206,6 @@ class PrepareData:
         ds = BertCorpus(name, shuffle=shuffle, max_length=max_length)
         ds.create(datafiles, max_size, valid_size, use_cache)
 
-    def embed(self, lang='fr', name=None, data=['news2014'], max_length=200,
-              max_size=None, shuffle=True, valid_size=0, use_cache=False):
-        """
-        Creates a dataset of BERT embeddings of sentence tokens.
-        """
-        name = name if name else f'embed-{lang}-en'
-        self._download(data, use_cache)
-        datafiles = self._datafiles(lang, data)
-        ds = EmbeddingCorpus(name, shuffle=shuffle, max_length=max_length)
-        ds.create(datafiles, max_size, valid_size, use_cache)
-
     def low_res_embed(self, step, size, lang='fr', name=None, data=['news2014'],
                       max_length=200, max_size=None, shuffle=True,
                       valid_size=0, use_cache=False):
@@ -229,6 +218,33 @@ class PrepareData:
         datafiles = self._datafiles(lang, data)
         ds = LowResolutionEmbeddingCorpus(
             name, step, size, shuffle=shuffle, max_length=max_length)
+        ds.create(datafiles, max_size, valid_size, use_cache)
+
+    def drop_nth_token(self, n, lang='fr', name=None, data=['news2014'],
+                       max_length=200, max_size=None, shuffle=True,
+                       valid_size=0, use_cache=False):
+        """
+        Creates a dataset of BERT tokens with every nth one dropped.
+        """
+        name = name if name else f'drop-nth-{lang}-en'
+        self._download(data, use_cache)
+        datafiles = self._datafiles(lang, data)
+        ds = DropNthTokenCorpus(
+            name, n, shuffle=shuffle, max_length=max_length)
+        ds.create(datafiles, max_size, valid_size, use_cache)
+
+    def keep_random(self, p, lang='fr', name=None, data=['news2014'],
+                    max_length=200, max_size=None, shuffle=True,
+                    valid_size=0, use_cache=False):
+        """
+        Creates a dataset of BERT tokens keeping a `p` percent at random and
+        dropping the rest.
+        """
+        name = name if name else f'drop-random-{lang}-en'
+        self._download(data, use_cache)
+        datafiles = self._datafiles(lang, data)
+        ds = DropRandomPercentCorpus(
+            name, p, shuffle=shuffle, max_length=max_length)
         ds.create(datafiles, max_size, valid_size, use_cache)
 
 
