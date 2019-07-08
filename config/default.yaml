@@ -27,6 +27,7 @@ network:
   dropout: 0.2
   efficient: true
   growth_rate: 32
+  kernel_size: 3
 
 optim: 
   seed: 1
