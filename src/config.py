@@ -44,9 +44,11 @@ def parse_config(config,
         if 'cpu' in device_ids:
             params['cpu'] = True
             params['gpu_ids'] = None
+            gpus = 0
         else:
             params['cpu'] = False
             params['gpu_ids'] = list(map(lambda s: int(s), device_ids))
+            gpus = len(params['gpu_ids'])
     if 'optim' not in params:
         params['optim'] = {}
     if lr is not None:
@@ -56,7 +58,8 @@ def parse_config(config,
     if 'data' not in params:
         params['data'] = {}
     if batch_size is not None:
-        params['data']['batch_size'] = int(batch_size)
+        params['data']['batch_size'] = \
+            int(batch_size) * gpus if gpus else int(batch_size)
     if epoch_size is not None:
         params['data']['epoch_size'] = int(epoch_size)
 
