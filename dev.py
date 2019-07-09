@@ -324,7 +324,9 @@ class PervasiveApp(object):
             print('Please install streamlit or dev-requirements.txt '
                   'to use this feature.')
             sys.exit(1)
-        print('************************************************************')
+        print('\nDue to a limitation of streamlit, this command can result in '
+              'an error about running out of inotify watches.')
+        print('\n************************************************************')
         print('TESTING LEARNING RATES: THIS WILL RUN FOR UNDER 100 BATCHES.')
         print('************************************************************\n')
         params, project_dir = parse_config(config, [gpu_id])
