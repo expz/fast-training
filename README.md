@@ -1,6 +1,8 @@
 # Fast Training of Machine Translation Models
 
-This project was developed during an Insight AI Fellowsip in the summer of 2019. It is in two parts. The first part has code for __fast training of a model__ that translates French sentences into English. The second part is a __small webapp__ that translates French sentences to English using a trained model.
+This project was developed during an Insight AI Fellowsip in the summer of 2019. It is in two parts. The first part has code for __training of a model__ that translates French sentences into English. The second part is a __small webapp__ that translates French sentences to English using a trained model.
+
+The main point of this project was to test out ideas for speeding up training. Unfortunately none of these ideas worked in practice.
 
 The model definition used the Pervasive Attention repo (https://github.com/elbayadm/gttn2d) as a reference implementation. Unless marked with an attribution (see esp. docstrings at the beginning of classes and functions) all code is my own. If you are looking for code to reuse in your own work, here is a list of classes that I would have liked to have found implemented elsewhere instead of writing my own:
 
