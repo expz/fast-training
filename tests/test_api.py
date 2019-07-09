@@ -11,8 +11,8 @@ def client():
 
 
 def test_translate_api(client: falcon.testing.TestClient):
-    fr_text = 'Bonjour le monde!'
+    fr_text = 'Comment allez-vous?'
     response = client.simulate_post('/api/translate/fren', json={'fr': fr_text})
     assert response.status_code == 200
     assert isinstance(response.json['en'], str)
-    assert 'Hello' in response.json['en']
+    assert 'How are you?' in response.json['en']
