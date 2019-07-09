@@ -43,7 +43,6 @@ virtualenv --python=$(which python3) fast-training
 
 3. Install Python packages.
 ```
-source fast-training/bin/activate
 source .env
 pip install -r requirements.txt
 ```
@@ -52,7 +51,6 @@ pip install -r requirements.txt
 
 1. Activate Python environment. From the root directory of this repository, run
 ```
-source fast-training/bin/activate
 source .env
 ```
 
@@ -91,19 +89,19 @@ source .env
 pip install -r dev-requirements.txt
 ```
 
-2. Download and prepare a small dataset of a few hundred MB. For more data, a larger data source or multiple data sources can be used. Possible data sources are listed using `python run.py pepare-data list-datasets`.
+2. Download and prepare a small dataset of a few hundred MB. For more data, a larger data source or multiple data sources can be used. Possible data sources are listed using `python dev.py pepare-data list-datasets`.
 ```
-python run.py prepare-data bert fr bert_fr_en "['news2014']" 50 --shuffle True --valid-size 4096
+python dev.py prepare-data bert fr bert_fr_en "['news2014']" 50 --shuffle True --valid-size 4096
 ```
 
 3. (Optional) View the model architecture.
 ```
-python run.py summary config/densenet-12.yaml
+python dev.py summary config/densenet-12.yaml
 ```
 
 4. Train a model. With the `bert_fr_en` dataset prepared, a 12 layer Densenet with BERT pretrained embeddings can be trained (`config/densenet-12.yaml`). This can take a long time.
 ```
-python run.py train --lr 0.005 config/densenet-12.yaml
+python dev.py train --lr 0.005 config/densenet-12.yaml
 ```
 Press CTRL-C to stop training in the middle.
 
