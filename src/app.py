@@ -19,12 +19,18 @@ api = falcon.API()
 
 
 class Health:
+    """
+    Returns the message 'OK' to prove the server is working.
+    """
     def on_get(self, req: falcon.Request, resp: falcon.Response):
         resp.body = "OK"
         resp.content_type = falcon.MEDIA_TEXT
 
 
 class TranslateFREN:
+    """
+    Translates a sentence from French to English.
+    """
     def on_get(self, req: falcon.Request, resp: falcon.Response):
         resp.body = self.on_post.__doc__
         resp.content_type = falcon.MEDIA_TEXT
@@ -62,6 +68,9 @@ class TranslateFREN:
 
 
 class Root:
+    """
+    Displays the translation webpage at the root URL.
+    """
     def on_get(self, req: falcon.Request, resp: falcon.Response):
         raise falcon.HTTPTemporaryRedirect('/index.html')
 

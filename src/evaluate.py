@@ -107,8 +107,7 @@ def moses_bleu_score(hypotheses, references, lowercase=False):
     Moses implementation that everyone uses.
 
     Adapted from
-    https://pytorchnlp.readthedocs.io/en/latest/
-            _modules/torchnlp/metrics/bleu.html
+    https://pytorchnlp.readthedocs.io/en/latest/_modules/torchnlp/metrics/bleu.html  # noqa: E501
     """
     if isinstance(hypotheses, list):
         hypotheses = np.array(hypotheses)

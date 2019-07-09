@@ -38,8 +38,7 @@ class LanguageCorpus:
 
     It uses a perl script from Moses to tokenize and `subword-nmt` to form
     BPE vocabulary. These are standard tools for preprocessing, see e.g.
-    https://github.com/pytorch/fairseq/blob/master/examples/translation
-           /prepare-wmt14en2de.sh
+    https://github.com/pytorch/fairseq/blob/master/examples/translation/prepare-wmt14en2de.sh  # noqa: E501
 
     It outputs sequences of integers indexing into the vocabulary.
 
@@ -590,7 +589,8 @@ class WindowedCorpus(BertCorpus):
 
 class EmbeddingCorpus(BertCorpus):
     """
-    This class represents a corpus composed of embedding vectors.
+    This class represents a corpus composed of embedding vectors. Presumably
+    any model training on it would use MSE as the loss function.
     """
 
     def __init__(self,
@@ -680,6 +680,9 @@ class LowResolutionEmbeddingCorpus(EmbeddingCorpus):
     each step.
 
     The EOS and PAD tokens are preserved *without* averaging.
+
+    Presumably any model training on this dataset would use MSE as the
+    loss function.
     """
 
     def __init__(self,

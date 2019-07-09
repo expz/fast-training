@@ -79,6 +79,9 @@ def dilate(network, fill_with_avg=True):
 
 
 class MaskedConv(nn.Module):
+    """
+    This is a base class for 2D masked convolutions.
+    """
 
     def __init__(self, ConvClass, in_channels, out_channels, kernel_size=3,
                  pad=0, stride=1, dilation=1, groups=1, bias=False):
@@ -156,8 +159,7 @@ class DenseLayer(nn.Module):
     """
     Layer of a DenseNet.
 
-    Adapted from https://github.com/elbayadm/attn2d/blob/
-                         master/nmt/models/efficient_densenet.py
+    Adapted from https://github.com/elbayadm/attn2d/blob/master/nmt/models/efficient_densenet.py  # noqa: E501
     """
 
     def __init__(self,
@@ -204,8 +206,7 @@ class DenseLayer(nn.Module):
             channels. Defined so that we can apply
             `torch.utils.checkpoint.checkpoint`.
 
-            Adapted from https://github.com/elbayadm/attn2d/blob/master/
-                                 nmt/models/efficient_densenet.py
+            Adapted from https://github.com/elbayadm/attn2d/blob/master/nmt/models/efficient_densenet.py  # noqa: E501
             """
             cat_input = torch.cat(inputs, 1)
             return self.conv1(self.relu1(self.norm1(cat_input)))
@@ -234,8 +235,7 @@ class DenseBlock(nn.Module):
     Block of layers in a DenseNet.
 
     Adapted from
-    https://github.com/elbayadm/attn2d/
-            blob/master/nmt/models/efficient_densenet.py
+    https://github.com/elbayadm/attn2d/blob/master/nmt/models/efficient_densenet.py  # noqa: E501
     """
 
     def __init__(self,
@@ -275,8 +275,7 @@ class Transition(nn.Sequential):
     BN > ReLU > Conv(k=1)
 
     From
-    https://github.com/elbayadm/attn2d/
-            blob/master/nmt/models/efficient_densenet.py
+    https://github.com/elbayadm/attn2d/blob/master/nmt/models/efficient_densenet.py  # noqa: E501
     """
 
     def __init__(self, input_size, output_size):
@@ -300,8 +299,7 @@ class DenseNet(nn.Module):
     slower.
 
     Adapted from
-    https://github.com/elbayadm/attn2d/
-            blob/master/nmt/models/efficient_densenet.py
+    https://github.com/elbayadm/attn2d/blob/master/nmt/models/efficient_densenet.py  # noqa: E501
     """
 
     def __init__(self,
@@ -423,8 +421,7 @@ class PervasiveOriginal(nn.Module):
     Pervasive Attention Network.
 
     This is a reimplementation of the model in
-    https://github.com/elbayadm/attn2d/
-            blob/master/nmt/models/pervasive.py
+    https://github.com/elbayadm/attn2d/blob/master/nmt/models/pervasive.py  # noqa: E501
     """
 
     def __init__(self,
@@ -541,8 +538,7 @@ class Pervasive(PervasiveOriginal):
     """
     A modificiation of the pervasive attention model at
 
-    https://github.com/elbayadm/attn2d/
-            blob/master/nmt/models/pervasive.py
+    https://github.com/elbayadm/attn2d/blob/master/nmt/models/pervasive.py
 
     Using the default settings, it takes in embedding vector of size 768
     and a linear layer reduces them to size 128. From there the model is

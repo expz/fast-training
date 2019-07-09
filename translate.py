@@ -14,6 +14,13 @@ MAX_LENGTH = 120
 
 
 def translate(src_text, config, model_path, beam=5):
+    """
+    Translate from a source language to a target language using
+    the model at `model_path` whose config is described by the config
+    at `config`.
+
+    The translation uses a beam search of width `beam`.
+    """
     params, project_dir = \
         parse_config(config, batch_size=1)
 

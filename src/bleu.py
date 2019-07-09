@@ -4,8 +4,10 @@ This file is taken from the BLEU4Python repository at
 
   https://github.com/zhyack/BLEU4Python/blob/master/bleu.py
 
-By Hongyu Zang (@zhyack). Replicates the behavior of the multi-bleu.perl
-script of the Moses library (https://github.com/moses-smt/mosesdecoder).
+by Hongyu Zang (@zhyack).
+
+Replicates the behavior of the multi-bleu.perl script of the
+Moses library (https://github.com/moses-smt/mosesdecoder).
 """
 
 from __future__ import absolute_import
@@ -115,8 +117,13 @@ def corpus_bleu(hypothesis, references, max_n=4):
     for n in range(max_n):
         log_bleu += my_log(bleu_scores[n])
     bleu = brevity_penalty * math.exp(log_bleu / float(max_n))
+    if total_len_ref == 0:
+        print('WARNING: zero length sentence')
+        nn = 0
+    else:
+        nn = total_len_hyp / total_len_ref
     return [bleu] + bleu_scores, [
-        brevity_penalty, total_len_hyp / total_len_ref, total_len_hyp,
+        brevity_penalty, nn, total_len_hyp,
         total_len_ref
     ]
 

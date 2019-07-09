@@ -11,6 +11,9 @@ class DaskDataset(torch.utils.data.Dataset):
     datasets that are too big to fit into memory.
 
     When queried for training examples, it returns torch tensors.
+
+    Written with reference to the base class:
+    https://github.com/pytorch/pytorch/blob/master/torch/utils/data/dataset.py
     """
 
     def __init__(self, *arrays):

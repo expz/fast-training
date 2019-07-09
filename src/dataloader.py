@@ -23,8 +23,7 @@ class SubSampler(SequentialSampler):
     It also shuffles the dataset using a deterministic seed.
 
     Written in analogy to
-        https://github.com/pytorch/pytorch/blob/master
-               /torch/utils/data/distributed.py
+        https://github.com/pytorch/pytorch/blob/master/torch/utils/data/distributed.py  # noqa: E501
     """
 
     def __init__(self, data_source, epoch_size=None):
