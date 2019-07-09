@@ -1,0 +1,26 @@
+#!/bin/bash
+
+SCRIPT_DIR="$(dirname "$BASH_SOURCE")"
+
+mkdir -p "$SCRIPT_DIR/data/moses/tokenizer"
+mkdir -p "$SCRIPT_DIR/data/moses/share/nonbreaking_prefixes"
+
+# Download tokenizer.
+curl -o "$SCRIPT_DIR/data/moses/share/nonbreaking_prefixes/nonbreaking_prefix.en" \
+    "https://raw.githubusercontent.com/moses-smt/mosesdecoder/ef028446f3640e007215b4576a4dc52a9c9de6db/scripts/share/nonbreaking_prefixes/nonbreaking_prefix.en"
+
+curl -o "$SCRIPT_DIR/data/moses/share/nonbreaking_prefixes/nonbreaking_prefix.fr" \
+    "https://raw.githubusercontent.com/moses-smt/mosesdecoder/ef028446f3640e007215b4576a4dc52a9c9de6db/scripts/share/nonbreaking_prefixes/nonbreaking_prefix.fr"
+
+curl -o "$SCRIPT_DIR/data/moses/tokenizer/tokenizer.perl" \
+    "https://raw.githubusercontent.com/moses-smt/mosesdecoder/ef028446f3640e007215b4576a4dc52a9c9de6db/scripts/tokenizer/tokenizer.perl"
+
+# Download model.
+mkdir -p "$SCRIPT_DIR/model"
+curl -o "$SCRIPT_DIR/model/fr2en.pth" \
+    "https://www.googleapis.com/storage/v1/b/insight-pier-models/o/fr2en.pth?alt=media"
+
+# Download vocab.
+mkdir -p "$SCRIPT_DIR/data/subword_nmt_fr_en"
+curl -o "$SCRIPT_DIR/data/subword_nmt_fr_en/vocab.txt" \
+    "https://www.googleapis.com/storage/v1/b/insight-pier-models/o/vocab.txt?alt=media"
