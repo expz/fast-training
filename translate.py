@@ -68,6 +68,6 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     config = 'config/fr2en.yaml' if not args.config else args.config
-    model = 'model/fr2en/model.pth' if not args.model else args.model
+    model = 'model/fr2en.pth' if not args.model else args.model
 
     translate(args.french, config, model, args.beam)

@@ -44,6 +44,23 @@ source .env
 pip install -r requirements.txt
 ```
 
+## Translate a sentence
+
+1. Activate Python environment. From the root directory of this repository, run
+```
+source .env
+```
+
+2. Download the tokenizer (19KB), model (32MB) and vocabulary (90KB).
+```
+./download
+```
+
+3. Translate a sentence.
+```
+python translate.py 'Comment allez-vous?'
+```
+
 ## Run webapp
 
 1. Activate Python environment. From the root directory of this repository, run
@@ -81,7 +98,9 @@ Then build the docker container and push it to Google Cloud Run:
 
 ## Training the model
 
-__WARNING__: Training takes substantial computing resources. Some datasets are large and require significant computing power to preprocess and significant RAM as working space (although preprocessing does not load all data in memory for embedding vector datasets). At least one NVIDIA GPU is also required.
+__WARNING__: Training takes substantial computing resources. Some datasets are large and require significant computing power to preprocess and significant RAM as working space (although preprocessing does not load all data in memory for embedding vector datasets). The code will run on a CPU, but to run it in a reasonable amount of time at least one NVIDIA GPU is required.
+
+__NOTE__: The possible commands and their syntax can be found by running `python dev.py --help`, or for a subcommand like `prepare-data` it would be `python dev.py prepare-data -- --help`.
 
 Run the following commands from the root directory of the repository.
 
@@ -93,19 +112,37 @@ pip install -r dev-requirements.txt
 
 2. Download and prepare a small dataset of a few hundred MB. For more data, a larger data source or multiple data sources can be used. Possible data sources are listed using `python dev.py pepare-data list-datasets`.
 ```
-python dev.py prepare-data bert fr bert_fr_en "['news2014']" 50 --shuffle True --valid-size 4096
+python dev.py prepare-data standard fr news_fr_en "['news2014']" 50 --shuffle True --joint-vocab-size 24000 --valid-size 4096 --use-cache True
 ```
 
 3. (Optional) View the model architecture.
 ```
-python dev.py summary config/densenet-12.yaml
+python dev.py summary config/news_fr_en.yaml
 ```
 
-4. Train a model. With the `bert_fr_en` dataset prepared, a 12 layer Densenet with BERT pretrained embeddings can be trained (`config/densenet-12.yaml`). This can take a long time.
+4. Train a model. With the `bert_fr_en` dataset prepared, a 6+4 layer Densenet can be trained (`config/news_fr_en.yaml`). This can take a few hours to reach a point of reasonable translations for some sentences. To train on NVIDIA GPU 0 (e.g., if you have just one GPU):
 ```
-python dev.py train --lr 0.005 config/densenet-12.yaml
+python dev.py train config/news_fr_en.yaml --lr 0.01 --device_ids '[0]'
 ```
-Press CTRL-C to stop training in the middle.
+To train on multiple GPUs as once (e.g., GPUs 0 and 1), run:
+```
+python dev.py train config/news_fr_en.yaml --lr 0.01 --device_ids '[0,1]'
+```
+Press CTRL-C to stop training in the middle. __The model is saved at the end of every epoch in the `model/news_fr_en` folder.__
+
+5. (Optional) To continue training a saved model, e.g., `model/news_fr_en/model_0.pth`, run
+```
+python dev.py train config/news_fr_en.yaml --lr 0.01 --device_ids '[0]' --restore model/news_fr_en/model_0.pth
+```
+
+6. Try out the model. To translate 16 examples, choose a saved model, e.g., `model_0.pth`, and run
+```
+python dev.py example config/news_fr_en.yaml --gpu_id 0 --model model/news_fr_en/model_0.pth --batch 16
+```
+Translate a sentence of your own with beam search of beam size 5:
+```
+python translate.py --config config/news_fr_en.yaml --model model/news_fr_en/model_0.pth --beam 5 'Comment allez-vous?'
+```
 
 ## Development
 
