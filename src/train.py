@@ -455,25 +455,30 @@ class BLEUScoreMetric(LearnerCallback):
                                        self.beam_size, self.Tt - 1)
                 bleu = 0.0
                 for b in range(out_data.shape[0]):
+                    out_len = out_data.shape[1]
+                    tgt_len = tgt_data.shape[1]
                     out_l = []
-                    for i in range(self.Tt - 1):
+                    for i in range(out_data.shape[1]):
                         if (out_data[b][i].item() == self.eos or
                                 out_data[b][i].item() == self.pad):
+                            out_len = i
                             break
                         out_l.append(str(out_data[b][i].item()))
                     tgt_l = []
                     for i in range(1, self.Tt):
                         if (tgt_data[b][i].item() == self.eos or
                                 tgt_data[b][i].item() == self.pad):
+                            tgt_len = i
                             # The Moses BLEU score script gives 0 for sentences
                             # of length less than 4, so ignore those BLEU score.
                             if i < 4:
                                 batch_size -= 1
                             break
                         tgt_l.append(str(tgt_data[b][i].item()))
-                    bleu += bleu_score(
-                        [' '.join(out_l)], [[' '.join(tgt_l)]]) * 100
-            self.count += batch_size
+                    if out_len >= 4 and tgt_len >= 4:
+                        self.count += 1
+                        bleu += bleu_score(
+                            [' '.join(out_l)], [[' '.join(tgt_l)]]) * 100
             self.bleu += bleu
 
     def on_epoch_end(self, last_metrics, train, **kwargs):
