@@ -15,7 +15,7 @@ import torch
 from config import parse_config
 from corpus import (
     LanguageCorpus, BertCorpus, LowResolutionEmbeddingCorpus,
-    DropRandomPercentCorpus, DropNthTokenCorpus)
+    KeepRandomPercentCorpus, DropNthTokenCorpus)
 from evaluate import beam_search
 from train import build_learner, train_worker, restore
 
@@ -243,7 +243,7 @@ class PrepareData:
         name = name if name else f'drop-random-{lang}-en'
         self._download(data, use_cache)
         datafiles = self._datafiles(lang, data)
-        ds = DropRandomPercentCorpus(
+        ds = KeepRandomPercentCorpus(
             name, p, shuffle=shuffle, max_length=max_length)
         ds.create(datafiles, max_size, valid_size, use_cache)
 
@@ -275,7 +275,8 @@ class PervasiveApp(object):
 
         # Prepare a place for the shared process communication file.
         model_name = params['model_name']
-        comm_file = f'{project_dir}/model/{model_name}/pgroup_shared'
+        pid = os.getpid()
+        comm_file = f'{project_dir}/model/{model_name}/pgroup_shared_{pid}'
         os.makedirs(f'{project_dir}/model/{model_name}', exist_ok=True)
         try:
             os.remove(comm_file)

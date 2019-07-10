@@ -468,7 +468,7 @@ class DropNthTokenCorpus(BertCorpus):
         return self._save_with_lens(toks, lens, valid_size, dtype='int32')
 
 
-class DropRandomPercentCorpus(BertCorpus):
+class KeepRandomPercentCorpus(BertCorpus):
     """
     This is a corpus which contains each sentence from `tok` starting
     with BOS and the first token of the sentence and with `p` percent total
@@ -498,12 +498,13 @@ class DropRandomPercentCorpus(BertCorpus):
         lang1, lang2 = tuple(new_toks.keys())
         for sent1, l1, sent2, l2 in zip(toks[lang1], lens[lang1],
                 toks[lang2], lens[lang2]):
-            indices = list(range(2, max_len))
+            indices = list(range(2, max_len))  # Never drop BOS or first token.
             random.shuffle(indices)
             indices = indices[:n]
             indices.sort()
-            new_sent1 = [sent1[i] for i in indices]
-            new_sent2 = [sent2[i] for i in indices]
+            new_sent1 = sent1[:2] + [sent1[i] for i in indices]
+            new_sent2 = sent2[:2] + [sent2[i] for i in indices]
+            # Add back EOS token if it was dropped.
             for i, c in enumerate(new_sent1):
                 if c == self.eos:
                     break
