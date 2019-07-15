@@ -7,6 +7,7 @@ import falcon
 import logging
 from model import translate_fren
 import os
+import random
 import sys
 from wsgiref import simple_server
 
@@ -16,6 +17,12 @@ logger.setLevel(logging.DEBUG)
 
 
 api = falcon.API()
+
+
+def load_lines(fn):
+    with open(fn, 'r') as f:
+        lines = [line for line in f]
+    return lines
 
 
 class Health:
@@ -67,6 +74,18 @@ class TranslateFREN:
         resp.media = {"en": translate_fren(fr_text)}
 
 
+class ExampleFR:
+    """
+    Generate an example French sentence for translation.
+    """
+    examples = load_lines(const.EXAMPLES_FILE)
+
+    def on_get(self, req: falcon.Request, resp: falcon.Response):
+        example = random.sample(self.examples, 1)[0]
+        resp.body = example
+        resp.content_type = falcon.MEDIA_TEXT
+
+
 class Root:
     """
     Displays the translation webpage at the root URL.
@@ -76,6 +95,7 @@ class Root:
 
 
 api.add_route('/api/translate/fren', TranslateFREN())
+api.add_route('/api/example/fr', ExampleFR())
 api.add_route('/health', Health())
 api.add_route('/', Root())
 api.add_static_route('/', os.path.join(const.APP_DIR, 'src', 'www'))

@@ -15,12 +15,16 @@
         <div class="col-sm-6">
           <h1 class="display-6">Translate French to English</h1>
           <form id="translationForm">
+            <div id="caveat">Words and short phrases currently translate poorly.<br/>See below for random example sentence.</div>
             <div class="form-group">
               <label for="french">French</label>
               <textarea class="form-control" rows="4" id="french" name="fr" placeholder="Enter French sentence here."></textarea>
             </div>
-	    <button type="submit">Translate</button>
-	    <div id="loader" class="spinner-border text-primary" role="status">
+            <div id="example-container">
+              Ex: <a id="example" href="#"></a>
+            </div>
+            <button type="submit">Translate</button>
+            <div id="loader" class="spinner-border text-primary" role="status">
               <span class="sr-only">Loading...</span>
             </div>
           </form>

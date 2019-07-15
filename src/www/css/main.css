@@ -5,6 +5,12 @@ body {
   margin-top: 40px;
 }
 
+#caveat {
+  font-size: 75%;
+  font-weight: bold;
+  margin-bottom: 10px;
+}
+
 #english {
   padding-top: 10px;
   font-weight: bold;
@@ -30,3 +36,17 @@ button:hover {
 }
 
 #loader { display: none; }
+
+#example-container {
+  font-size: 75%;
+  margin-top: 12px;
+}
+
+#example {
+  color: #1d1ab2;
+  text-decoration: 'none';
+}
+
+#example:hover {
+  text-decoration: 'underline';
+}
