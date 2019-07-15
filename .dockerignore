@@ -1,5 +1,6 @@
 **/README.md
 data/
+!data/examples-fr.txt
 logs/
 model/
 fast-training/

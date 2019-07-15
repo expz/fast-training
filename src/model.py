@@ -47,14 +47,16 @@ def translate_fren(fr_text):
     model, src_vocab, tgt_vocab = get_model()
 
     # Prepare input vector.
-    src_toks = src_vocab.to_ints(stdout)[:MAX_LENGTH]
+    src_toks = src_vocab.to_ints(stdout)
+    dotdotdot = '...' if len(src_toks) > MAX_LENGTH else ''
+    src_toks = src_toks[:MAX_LENGTH]
     src_data = torch.tensor([src_toks])
     max_tgt_length = min(
         MAX_LENGTH, int(max(len(src_toks) * 1.5, len(src_toks) + 3)))
 
     # Beam search with width BEAM_WIDTH.
     out_data = beam_search(model, src_data, BEAM_WIDTH, max_tgt_length)
-    en_text = tgt_vocab.to_text(out_data)[0]
+    en_text = tgt_vocab.to_text(out_data)[0] + dotdotdot
 
     logger.debug(f'translating finished in {time.time() - t0:.2f}s')
     logger.debug(f"""

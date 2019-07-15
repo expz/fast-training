@@ -1,6 +1,7 @@
 var translationForm = document.getElementById('translationForm');
 
 var xmlhttp = null;
+var xmlhttpExample = null;
 
 function request(data, handler) {
   xmlhttp = new XMLHttpRequest();
@@ -14,13 +15,13 @@ function request(data, handler) {
 }
 
 function requestExample() {
-  xmlhttp = new XMLHttpRequest();
+  xmlhttpExample = new XMLHttpRequest();
 
-  xmlhttp.onreadystatechange = printExample;
+  xmlhttpExample.onreadystatechange = printExample;
 
-  xmlhttp.open('GET', 'api/example/fr', true);
+  xmlhttpExample.open('GET', 'api/example/fr', true);
 
-  xmlhttp.send();
+  xmlhttpExample.send();
 }
 
 function translate() {
@@ -47,6 +48,7 @@ function exampleClickHandler(e) {
   e.preventDefault();
   document.getElementById('french').value = e.target.textContent;
   translate();
+  requestExample();
 }
 
 function printTranslation() {
@@ -56,17 +58,17 @@ function printTranslation() {
       document.getElementById('english').textContent = resp.en;
       document.getElementById('loader').style.display = 'none';
     } else {
-      alert('There was an error ' + xmlhttp.status);
+      console.log('There was an error ' + xmlhttp.status);
     }
   }
 }
 
 function printExample() {
-  if (xmlhttp.readyState == XMLHttpRequest.DONE) {   // XMLHttpRequest.DONE == 4
-    if (xmlhttp.status == 200) {
-      document.getElementById('example').textContent = xmlhttp.responseText;
+  if (xmlhttpExample.readyState == XMLHttpRequest.DONE) {   // XMLHttpRequest.DONE == 4
+    if (xmlhttpExample.status == 200) {
+      document.getElementById('example').textContent = xmlhttpExample.responseText;
     } else {
-      alert('There was an error ' + xmlhttp.status);
+      console.log('There was an error ' + xmlhttp.status);
     }
   }
 }

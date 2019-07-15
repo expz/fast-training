@@ -31,6 +31,8 @@ COPY entrypoint /app/entrypoint
 
 RUN chmod a+x /app/entrypoint
 
+COPY data/examples-fr.txt /app/data/examples-fr.txt
+
 WORKDIR /app
 
 ENV PORT 8080
