@@ -33,14 +33,18 @@ If you prefer to use `conda` for package management, then the list of required p
 git clone https://github.com/expz/fast-training
 ```
 
-2. Create Python environment named `fast-training`. __NOTE:__ Moving this directory after creating the Python environment will break the environment and require deleting and redoing the setup.
+2. Change directory into the repo.
 ```
 cd fast-training
+```
+
+3. Create Python environment named `fast-training`. __NOTE:__ Moving this directory after creating the Python environment will break the environment and require deleting and redoing the setup.
+```
 deactivate 2>/dev/null
 virtualenv --python=$(which python3) fast-training
 ```
 
-3. Install Python packages.
+4. Install Python packages.
 ```
 source .env
 pip install -r requirements.txt
